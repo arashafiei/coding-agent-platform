@@ -1,0 +1,14 @@
+{
+  "name": "coding-agent-platform",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "docker compose up --build",
+    "up": "docker compose up -d --build",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f",
+    "health": "node scripts/health-check.mjs",
+    "import:n8n": "node scripts/import-n8n-workflows.mjs"
+  }
+}

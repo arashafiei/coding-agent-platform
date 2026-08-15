@@ -1,0 +1,118 @@
+{
+  "name": "Coding Agent - Plan",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "coding-agent-plan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "171f143b-02fc-4c11-8639-e9cd90b67b83",
+      "name": "Plan Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/planner",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ request: $('Plan Webhook').item.json.body.request, projectId: $('Plan Webhook').item.json.body.projectId, runId: $('Plan Webhook').item.json.body.runId }) }}",
+        "options": {}
+      },
+      "id": "3f205784-c3f1-40fb-af4a-637e5b6c9f0f",
+      "name": "Planner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Plan Webhook').item.json.body.runId + '/plan'}}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ plan: $json }) }}",
+        "options": {}
+      },
+      "id": "fdd6b732-44ca-4bb2-a5c1-844d1c1d08ee",
+      "name": "Save Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, status: 'awaiting_approval' }) }}",
+        "options": {}
+      },
+      "id": "1736dcbb-fe46-42a7-bc74-c193a674e93e",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        720,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Plan Webhook": {
+      "main": [
+        [
+          {
+            "node": "Planner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planner": {
+      "main": [
+        [
+          {
+            "node": "Save Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Plan": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "18b9db09-1585-4e5e-b51f-29ebeaa91b49",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
