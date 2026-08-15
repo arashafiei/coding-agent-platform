@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Execute Webhook').item.json.body.runId}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Execute Webhook').item.json.body.runId}}",
         "options": {}
       },
       "id": "bd7aa65c-8be6-4f10-bf86-1e57cea9aafc",
@@ -34,7 +34,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/coder",
+        "url": "http://agent-service:4100/coder",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -53,7 +53,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/files'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -72,7 +72,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.RUNNER_INTERNAL_URL || 'http://runner:4200'}}/execute",
+        "url": "http://runner:4200/execute",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -93,7 +93,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -112,7 +112,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/reviewer",
+        "url": "http://agent-service:4100/reviewer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -165,7 +165,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/fixer",
+        "url": "http://agent-service:4100/fixer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -184,7 +184,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/files'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -203,7 +203,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.RUNNER_INTERNAL_URL || 'http://runner:4200'}}/execute",
+        "url": "http://runner:4200/execute",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -224,7 +224,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -243,7 +243,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/reviewer",
+        "url": "http://agent-service:4100/reviewer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -296,7 +296,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/fixer",
+        "url": "http://agent-service:4100/fixer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -315,7 +315,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/files'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -334,7 +334,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.RUNNER_INTERNAL_URL || 'http://runner:4200'}}/execute",
+        "url": "http://runner:4200/execute",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -355,7 +355,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -374,7 +374,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/reviewer",
+        "url": "http://agent-service:4100/reviewer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -427,7 +427,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/fixer",
+        "url": "http://agent-service:4100/fixer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -446,7 +446,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/files'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -465,7 +465,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.RUNNER_INTERNAL_URL || 'http://runner:4200'}}/execute",
+        "url": "http://runner:4200/execute",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -486,7 +486,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -505,7 +505,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/reviewer",
+        "url": "http://agent-service:4100/reviewer",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -558,7 +558,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/state'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/state'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -577,7 +577,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Get Run').item.json.id + '/state'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/state'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",

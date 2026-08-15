@@ -14,6 +14,12 @@ const redis = new Redis(process.env.REDIS_URL);
 const workspace='/workspace/projects';
 const systemLog='/app/system-logs/events.log';
 
+async function ensureSchema(){
+  await db.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS request_id TEXT`);
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_request_id ON projects(request_id) WHERE request_id IS NOT NULL`);
+}
+
+
 const slugify=s=>s.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 async function event(runId, projectId, source, type, message, data={}) {
   const payload={runId,projectId,source,type,message,data,ts:new Date().toISOString()};
@@ -39,17 +45,73 @@ async function ensureRepo(project){
 }
 
 app.get('/health',(_q,r)=>r.json({ok:true}));
-app.get('/projects',async(_q,r)=>r.json((await db.query('SELECT * FROM projects ORDER BY created_at DESC')).rows));
+app.get('/projects',async(req,res)=>{
+  const status=req.query.status;
+  const query=status && status!=='all'
+    ? ['SELECT * FROM projects WHERE status=$1 ORDER BY created_at DESC',[status]]
+    : ['SELECT * FROM projects ORDER BY created_at DESC',[]];
+  res.json((await db.query(query[0],query[1])).rows);
+});
 app.post('/projects',async(req,res)=>{
-  try{const {name,description='',requirements}=req.body; const slug=`${slugify(name)}-${Date.now().toString(36)}`;
-    const p=(await db.query('INSERT INTO projects(name,slug,description,requirements) VALUES($1,$2,$3,$4) RETURNING *',[name,slug,description,requirements])).rows[0]; await ensureRepo(p);
+  try{
+    const {name,description='',requirements,requestId}=req.body;
+    if(!name?.trim() || !requirements?.trim()) return res.status(400).json({error:'name and requirements are required'});
+    if(requestId){
+      const existing=(await db.query('SELECT * FROM projects WHERE request_id=$1',[requestId])).rows[0];
+      if(existing){
+        const run=(await db.query('SELECT * FROM runs WHERE project_id=$1 ORDER BY created_at ASC LIMIT 1',[existing.id])).rows[0];
+        return res.status(200).json({project:existing,run,idempotent:true});
+      }
+    }
+    const slug=`${slugify(name)}-${Date.now().toString(36)}`;
+    let p;
+    try{
+      p=(await db.query('INSERT INTO projects(name,slug,description,requirements,request_id) VALUES($1,$2,$3,$4,$5) RETURNING *',[name.trim(),slug,description,requirements,requestId||null])).rows[0];
+    }catch(e){
+      if(e.code==='23505' && requestId){
+        const existing=(await db.query('SELECT * FROM projects WHERE request_id=$1',[requestId])).rows[0];
+        const run=(await db.query('SELECT * FROM runs WHERE project_id=$1 ORDER BY created_at ASC LIMIT 1',[existing.id])).rows[0];
+        return res.status(200).json({project:existing,run,idempotent:true});
+      }
+      throw e;
+    }
+    await ensureRepo(p);
     const run=(await db.query("INSERT INTO runs(project_id,request,status,current_stage) VALUES($1,$2,'planning','planner') RETURNING *",[p.id,requirements])).rows[0];
-    await event(run.id,p.id,'api','RUN_CREATED','Project and initial run created'); await trigger('coding-agent-plan',{projectId:p.id,runId:run.id,request:requirements});
+    await event(run.id,p.id,'api','RUN_CREATED','Project and initial run created');
+    await trigger('coding-agent-plan',{projectId:p.id,runId:run.id,request:requirements});
     res.status(201).json({project:p,run});
   }catch(e){res.status(500).json({error:e.message});}
 });
 app.get('/projects/:id',async(req,res)=>{const p=(await db.query('SELECT * FROM projects WHERE id=$1',[req.params.id])).rows[0]; if(!p)return res.sendStatus(404); const runs=(await db.query('SELECT * FROM runs WHERE project_id=$1 ORDER BY created_at DESC',[p.id])).rows; res.json({...p,runs});});
-app.post('/projects/:id/changes',async(req,res)=>{try{const p=(await db.query('SELECT * FROM projects WHERE id=$1',[req.params.id])).rows[0]; const run=(await db.query("INSERT INTO runs(project_id,type,request,status,current_stage) VALUES($1,'CHANGE_REQUEST',$2,'planning','planner') RETURNING *",[p.id,req.body.request])).rows[0]; await event(run.id,p.id,'api','RUN_CREATED','Change request created'); await trigger('coding-agent-plan',{projectId:p.id,runId:run.id,request:req.body.request}); res.status(201).json(run);}catch(e){res.status(500).json({error:e.message})}});
+app.patch('/projects/:id',async(req,res)=>{
+  try{
+    const current=(await db.query('SELECT * FROM projects WHERE id=$1',[req.params.id])).rows[0];
+    if(!current)return res.sendStatus(404);
+    const name=req.body.name?.trim() || current.name;
+    const description=req.body.description ?? current.description;
+    const requirements=req.body.requirements ?? current.requirements;
+    const p=(await db.query('UPDATE projects SET name=$1,description=$2,requirements=$3,updated_at=NOW() WHERE id=$4 RETURNING *',[name,description,requirements,current.id])).rows[0];
+    res.json(p);
+  }catch(e){res.status(500).json({error:e.message});}
+});
+app.post('/projects/:id/archive',async(req,res)=>{
+  const p=(await db.query("UPDATE projects SET status='archived',updated_at=NOW() WHERE id=$1 RETURNING *",[req.params.id])).rows[0];
+  if(!p)return res.sendStatus(404); res.json(p);
+});
+app.post('/projects/:id/restore',async(req,res)=>{
+  const p=(await db.query("UPDATE projects SET status='active',updated_at=NOW() WHERE id=$1 RETURNING *",[req.params.id])).rows[0];
+  if(!p)return res.sendStatus(404); res.json(p);
+});
+app.delete('/projects/:id',async(req,res)=>{
+  try{
+    const p=(await db.query('SELECT * FROM projects WHERE id=$1',[req.params.id])).rows[0];
+    if(!p)return res.sendStatus(404);
+    await db.query('DELETE FROM projects WHERE id=$1',[p.id]);
+    await fs.rm(path.join(workspace,p.slug),{recursive:true,force:true});
+    res.json({ok:true,id:p.id});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+app.post('/projects/:id/changes',async(req,res)=>{try{const p=(await db.query('SELECT * FROM projects WHERE id=$1',[req.params.id])).rows[0]; if(!p)return res.sendStatus(404); if(p.status==='archived')return res.status(409).json({error:'Restore the project before starting a new change'}); const run=(await db.query("INSERT INTO runs(project_id,type,request,status,current_stage) VALUES($1,'CHANGE_REQUEST',$2,'planning','planner') RETURNING *",[p.id,req.body.request])).rows[0]; await event(run.id,p.id,'api','RUN_CREATED','Change request created'); await trigger('coding-agent-plan',{projectId:p.id,runId:run.id,request:req.body.request}); res.status(201).json(run);}catch(e){res.status(500).json({error:e.message})}});
 app.get('/runs/:id',async(req,res)=>{const run=(await db.query('SELECT r.*,p.name project_name,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1',[req.params.id])).rows[0]; if(!run)return res.sendStatus(404); const events=(await db.query('SELECT * FROM run_events WHERE run_id=$1 ORDER BY id',[run.id])).rows; res.json({...run,events});});
 app.post('/runs/:id/plan',async(req,res)=>{const run=(await db.query('UPDATE runs SET plan=$1,status=$2,current_stage=$3 WHERE id=$4 RETURNING *',[req.body.plan,'awaiting_approval','human_approval',req.params.id])).rows[0]; await event(run.id,run.project_id,'planner','PLAN_READY','Plan ready for manager approval',req.body.plan); res.json(run);});
 app.post('/runs/:id/approve',async(req,res)=>{try{const run=(await db.query("UPDATE runs SET human_feedback=human_feedback || $1::jsonb,status='running',current_stage='coder',started_at=COALESCE(started_at,NOW()) WHERE id=$2 RETURNING *",[JSON.stringify(req.body.feedback?[{message:req.body.feedback,at:new Date().toISOString()}]:[]),req.params.id])).rows[0]; await event(run.id,run.project_id,'human','HUMAN_APPROVED','Manager approved plan',{feedback:req.body.feedback||''}); await trigger('coding-agent-execute',{runId:run.id,projectId:run.project_id}); res.json(run);}catch(e){res.status(500).json({error:e.message})}});
@@ -58,4 +120,6 @@ app.post('/runs/:id/files',async(req,res)=>{try{const run=(await db.query('SELEC
  const git=simpleGit(dir); await git.add('.'); const msg=req.body.message||`agent: update run ${run.id}`; let sha=null; try{await git.commit(msg); sha=(await git.revparse(['HEAD'])).trim();}catch{} if(sha && run.github_repo && process.env.GITHUB_TOKEN){ const remote=`https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${run.github_repo}.git`; await git.push(remote,'HEAD:main',['--force-with-lease']).catch(()=>git.push(remote,'HEAD:main').catch(()=>{})); } await db.query('INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4,$5)',[run.id,req.body.agent||'coder',req.body.attempt||0,req.body.files||[],sha]); await event(run.id,run.project_id,req.body.agent||'coder','FILES_WRITTEN',`${(req.body.files||[]).length} files written`,{commitSha:sha}); res.json({ok:true,commitSha:sha});}catch(e){res.status(500).json({error:e.message})}});
 app.post('/runs/:id/execution',async(req,res)=>{const run=(await db.query('SELECT * FROM runs WHERE id=$1',[req.params.id])).rows[0]; await db.query('INSERT INTO execution_results(run_id,attempt,command,exit_code,stdout,stderr,duration_ms) VALUES($1,$2,$3,$4,$5,$6,$7)',[run.id,req.body.attempt||0,req.body.command||'',req.body.exitCode,req.body.stdout||'',req.body.stderr||'',req.body.durationMs]); await event(run.id,run.project_id,'runner',req.body.exitCode===0?'EXECUTION_PASSED':'EXECUTION_FAILED',`Execution finished with code ${req.body.exitCode}`,req.body); res.json({ok:true});});
 app.get('/runs/:id/events',async(req,res)=>{res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache');res.setHeader('Connection','keep-alive'); let last='$'; const key=`run:${req.params.id}:events`; const loop=async()=>{while(!res.writableEnded){try{const out=await redis.xread('BLOCK',15000,'COUNT',50,'STREAMS',key,last); if(!out){res.write(': ping\n\n');continue;} for(const [,items] of out) for(const [id,fields] of items){last=id; const i=fields.indexOf('payload'); if(i>=0)res.write(`data: ${fields[i+1]}\n\n`);}}catch{await new Promise(r=>setTimeout(r,1000));}}}; loop();});
-app.listen(port,'0.0.0.0',()=>console.log(`api listening ${port}`));
+ensureSchema()
+  .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`api listening ${port}`)))
+  .catch(err=>{console.error('database bootstrap failed',err);process.exit(1);});

@@ -20,7 +20,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.AGENT_INTERNAL_URL || 'http://agent-service:4100'}}/planner",
+        "url": "http://agent-service:4100/planner",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
@@ -39,7 +39,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{($env.API_INTERNAL_URL || 'http://api:4000') + '/runs/' + $('Plan Webhook').item.json.body.runId + '/plan'}}",
+        "url": "={{'http://api:4000' + '/runs/' + $('Plan Webhook').item.json.body.runId + '/plan'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",

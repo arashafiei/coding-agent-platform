@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT NOT NULL DEFAULT '',
   requirements TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
+  request_id TEXT,
   github_repo TEXT,
   github_url TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -75,3 +76,5 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(project_id, namespace, key)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_request_id ON projects(request_id) WHERE request_id IS NOT NULL;
