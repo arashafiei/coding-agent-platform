@@ -78,3 +78,19 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_request_id ON projects(request_id) WHERE request_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS run_actions (
+  id BIGSERIAL PRIMARY KEY,
+  run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  attempt INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  source TEXT NOT NULL DEFAULT 'manual',
+  input JSONB NOT NULL DEFAULT '{}'::jsonb,
+  output JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  UNIQUE(run_id, action, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_run_actions_run_action ON run_actions(run_id, action, attempt DESC);
