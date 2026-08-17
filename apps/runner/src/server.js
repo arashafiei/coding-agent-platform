@@ -1,7 +1,61 @@
-import express from 'express'; import Docker from 'dockerode'; import fs from 'node:fs/promises'; import path from 'node:path';
-const app=express();app.use(express.json({limit:'1mb'}));const docker=new Docker({socketPath:'/var/run/docker.sock'});const root='/workspace/projects';
-app.get('/health',async(_q,r)=>{try{await docker.ping();r.json({ok:true})}catch(e){r.status(500).json({ok:false,error:e.message})}});
-app.post('/execute',async(req,res)=>{const start=Date.now();let container;try{const {projectSlug,command='npm test'}=req.body; const projectDir=path.join(root,projectSlug); await fs.access(projectDir); const timeout=Number(process.env.RUNNER_TIMEOUT_SECONDS||90)*1000; const memory=Number(process.env.RUNNER_MEMORY_MB||512)*1024*1024; const cpus=Number(process.env.RUNNER_CPUS||1);
- container=await docker.createContainer({Image:'node:22-alpine',Cmd:['sh','-lc',`if [ -f package.json ]; then npm install --ignore-scripts --no-audit --no-fund; fi; ${command}`],WorkingDir:'/workspace',HostConfig:{Binds:[`${projectDir}:/workspace:rw`],Memory:memory,NanoCpus:cpus*1e9,NetworkMode:'none',ReadonlyRootfs:false,AutoRemove:false}}); await container.start(); const timer=setTimeout(()=>container.kill().catch(()=>{}),timeout); const result=await container.wait(); clearTimeout(timer); const logs=await container.logs({stdout:true,stderr:true}); const text=logs.toString('utf8'); res.json({exitCode:result.StatusCode,stdout:text,stderr:result.StatusCode===0?'':text,durationMs:Date.now()-start});
- }catch(e){res.status(500).json({exitCode:1,stdout:'',stderr:e.message,durationMs:Date.now()-start})}finally{if(container) await container.remove({force:true}).catch(()=>{})}});
-app.listen(Number(process.env.PORT||4200),'0.0.0.0');
+import express from 'express';
+import Docker from 'dockerode';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const app = express();
+app.use(express.json({limit: '1mb'}));
+const docker = new Docker({socketPath: '/var/run/docker.sock'});
+const root = '/workspace/projects';
+app.get('/health', async (_q, r) => {
+    try {
+        await docker.ping();
+        r.json({ok: true})
+    } catch (e) {
+        r.status(500).json({ok: false, error: e.message})
+    }
+});
+app.post('/execute', async (req, res) => {
+    const start = Date.now();
+    let container;
+    try {
+        const {projectSlug, command = 'npm test'} = req.body;
+        const projectDir = path.join(root, projectSlug);
+        await fs.access(projectDir);
+        const timeout = Number(process.env.RUNNER_TIMEOUT_SECONDS || 90) * 1000;
+        const memory = Number(process.env.RUNNER_MEMORY_MB || 512) * 1024 * 1024;
+        const cpus = Number(process.env.RUNNER_CPUS || 1);
+        container = await docker.createContainer({
+            Image: 'node:22-alpine',
+            Cmd: ['sh', '-lc', `if [ -f package.json ]; then npm install --ignore-scripts --no-audit --no-fund; fi; ${command}`],
+            WorkingDir: '/workspace',
+            HostConfig: {
+                Binds: [`${projectDir}:/workspace:rw`],
+                Memory: memory,
+                NanoCpus: cpus * 1e9,
+                NetworkMode: 'none',
+                ReadonlyRootfs: false,
+                AutoRemove: false
+            }
+        });
+        await container.start();
+        const timer = setTimeout(() => container.kill().catch(() => {
+        }), timeout);
+        const result = await container.wait();
+        clearTimeout(timer);
+        const logs = await container.logs({stdout: true, stderr: true});
+        const text = logs.toString('utf8');
+        res.json({
+            exitCode: result.StatusCode,
+            stdout: text,
+            stderr: result.StatusCode === 0 ? '' : text,
+            durationMs: Date.now() - start
+        });
+    } catch (e) {
+        res.status(500).json({exitCode: 1, stdout: '', stderr: e.message, durationMs: Date.now() - start})
+    } finally {
+        if (container) await container.remove({force: true}).catch(() => {
+        })
+    }
+});
+app.listen(Number(process.env.PORT || 4200), '0.0.0.0');
