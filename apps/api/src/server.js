@@ -287,7 +287,7 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
         const webhook = action === 'planner' ? 'coding-agent-plan' : 'coding-agent-retry-action';
         const payload = action === 'planner'
             ? {projectId: run.project_id, runId: run.id, request: run.request, retry: true, attempt: actionRow.attempt}
-            : {projectId: run.project_id, runId: run.id, action, attempt: actionRow.attempt};
+            : {projectId: run.project_id, runId: run.id, action};
 
         await event(run.id, run.project_id, 'api', 'ACTION_RETRY_TRIGGERED', `${action} retry #${actionRow.attempt} dispatching to n8n`, {
             action,
@@ -330,11 +330,19 @@ app.post('/runs/:id/actions/:action/execute-retry', async (req, res) => {
         if (!run) return res.sendStatus(404);
         if (run.project_status === 'archived') return res.status(409).json({error: 'Restore the project before retrying an action'});
 
+        // Retry attempt is owned by the API. n8n only sends runId + action.
+        // This prevents undefined/NaN attempt values from ever reaching PostgreSQL.
         actionRow = (await db.query(
-            "SELECT * FROM run_actions WHERE run_id=$1 AND action=$2 AND attempt=$3 AND status='running'",
-            [run.id, action, Number(req.body?.attempt)]
+            "SELECT * FROM run_actions WHERE run_id=$1 AND action=$2 AND status='running' ORDER BY attempt DESC LIMIT 1",
+            [run.id, action]
         )).rows[0];
-        if (!actionRow) return res.status(409).json({error: 'Retry action was not registered or is no longer running'});
+
+        if (!actionRow) {
+            return res.status(409).json({
+                error: 'No active retry attempt exists for this run and action',
+                action
+            });
+        }
 
         let output = {};
         let nextStage = action;
@@ -482,9 +490,50 @@ app.post('/runs/:id/state', async (req, res) => {
 });
 app.post('/runs/:id/files', async (req, res) => {
     try {
-        const run = (await db.query('SELECT r.*,p.slug,p.github_repo FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1', [req.params.id])).rows[0];
+        const run = (await db.query(
+            `SELECT
+                r.*,
+                p.slug,
+                p.github_repo
+             FROM runs r
+             JOIN projects p ON p.id = r.project_id
+             WHERE r.id = $1`,
+            [req.params.id]
+        )).rows[0];
+
+        if (!run) {
+            return res.status(404).json({error: 'Run not found'});
+        }
+
         const dir = path.join(workspace, run.slug);
         await fs.mkdir(dir, {recursive: true});
+
+        // Be defensive here: generated-project storage may survive independently
+        // from Git metadata, or an older project may not have been initialized.
+        const git = simpleGit(dir);
+        const isRepo = await git.checkIsRepo();
+
+        if (!isRepo) {
+            await git.init();
+            await git.addConfig('user.name', 'Coding Agent');
+            await git.addConfig('user.email', 'coding-agent@local');
+
+            const gitignore = path.join(dir, '.gitignore');
+            try {
+                await fs.access(gitignore);
+            } catch {
+                await fs.writeFile(gitignore, 'node_modules\n.env\ndist\n');
+            }
+
+            await event(
+                run.id,
+                run.project_id,
+                'git',
+                'GIT_REPOSITORY_INITIALIZED',
+                'Local Git repository initialized'
+            );
+        }
+
         for (const f of req.body.files || []) {
             const safe = path.normalize(f.path).replace(/^(\.\.(\/|\\|$))+/, '');
             const full = path.join(dir, safe);
@@ -492,22 +541,40 @@ app.post('/runs/:id/files', async (req, res) => {
             await fs.mkdir(path.dirname(full), {recursive: true});
             await fs.writeFile(full, f.content);
         }
-        const git = simpleGit(dir);
+
         await git.add('.');
+
         const msg = req.body.message || `agent: update run ${run.id}`;
         let sha = null;
+
         try {
             await git.commit(msg);
             sha = (await git.revparse(['HEAD'])).trim();
         } catch {
+            // No changes to commit is not a fatal error for the pipeline.
         }
+
         if (sha && run.github_repo && process.env.GITHUB_TOKEN) {
             const remote = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${run.github_repo}.git`;
-            await git.push(remote, 'HEAD:main', ['--force-with-lease']).catch(() => git.push(remote, 'HEAD:main').catch(() => {
-            }));
+            await git.push(remote, 'HEAD:main', ['--force-with-lease']).catch(() =>
+                git.push(remote, 'HEAD:main').catch(() => {})
+            );
         }
-        await db.query('INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4,$5)', [run.id, req.body.agent || 'coder', req.body.attempt || 0, req.body.files || [], sha]);
-        await event(run.id, run.project_id, req.body.agent || 'coder', 'FILES_WRITTEN', `${(req.body.files || []).length} files written`, {commitSha: sha});
+
+        await db.query(
+            'INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4,$5)',
+            [run.id, req.body.agent || 'coder', req.body.attempt || 0, req.body.files || [], sha]
+        );
+
+        await event(
+            run.id,
+            run.project_id,
+            req.body.agent || 'coder',
+            'FILES_WRITTEN',
+            `${(req.body.files || []).length} files written`,
+            {commitSha: sha}
+        );
+
         res.json({ok: true, commitSha: sha});
     } catch (e) {
         res.status(500).json({error: e.message})
