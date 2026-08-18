@@ -96,3 +96,19 @@ CREATE TABLE IF NOT EXISTS run_actions (
   UNIQUE(run_id, action, attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_run_actions_run_action ON run_actions(run_id, action, attempt DESC);
+
+-- Repair stale action history produced by older retry implementations.
+-- An older attempt cannot remain "running" when a newer attempt already
+-- exists for the same run and action.
+UPDATE run_actions AS current
+SET status = 'failed',
+    error = COALESCE(current.error, 'Superseded by a newer attempt'),
+    finished_at = COALESCE(current.finished_at, NOW())
+WHERE current.status = 'running'
+  AND EXISTS (
+      SELECT 1
+      FROM run_actions AS newer
+      WHERE newer.run_id = current.run_id
+        AND newer.action = current.action
+        AND newer.attempt > current.attempt
+  );

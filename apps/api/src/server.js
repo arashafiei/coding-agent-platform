@@ -20,9 +20,21 @@ async function ensureSchema() {
     await db.query(`ALTER TABLE projects
         ADD COLUMN IF NOT EXISTS request_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_request_id ON projects(request_id) WHERE request_id IS NOT NULL`);
-    await db.query(`CREATE TABLE IF NOT EXISTS run_actions (
-        id BIGSERIAL PRIMARY KEY,
-        run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    await db.query(`CREATE TABLE IF NOT EXISTS run_actions
+    (
+        id
+        BIGSERIAL
+        PRIMARY
+        KEY,
+        run_id
+        UUID
+        NOT
+        NULL
+        REFERENCES
+        runs
+                    (
+        id
+                    ) ON DELETE CASCADE,
         action TEXT NOT NULL,
         attempt INT NOT NULL,
         status TEXT NOT NULL DEFAULT 'running',
@@ -30,15 +42,40 @@ async function ensureSchema() {
         input JSONB NOT NULL DEFAULT '{}'::jsonb,
         output JSONB NOT NULL DEFAULT '{}'::jsonb,
         error TEXT,
-        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW
+                    (
+                    ),
         finished_at TIMESTAMPTZ,
-        UNIQUE(run_id, action, attempt)
-    )`);
+        UNIQUE
+                    (
+                        run_id,
+                        action,
+                        attempt
+                    )
+        )`);
     await db.query(`ALTER TABLE run_actions
         ADD COLUMN IF NOT EXISTS resume_url TEXT`);
     await db.query(`ALTER TABLE run_actions
         ADD COLUMN IF NOT EXISTS n8n_execution_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_run_actions_run_action ON run_actions(run_id, action, attempt DESC)`);
+
+    // Clean up orphaned attempts created by the older retry implementation.
+    // If a newer attempt exists for the same run/action, an older "running"
+    // row cannot still be the active attempt.
+    await db.query(`
+        UPDATE run_actions AS current
+        SET status = 'failed',
+            error = COALESCE(current.error, 'Superseded by a newer attempt'),
+            finished_at = COALESCE(current.finished_at, NOW())
+        WHERE current.status = 'running'
+          AND EXISTS (
+              SELECT 1
+              FROM run_actions AS newer
+              WHERE newer.run_id = current.run_id
+                AND newer.action = current.action
+                AND newer.attempt > current.attempt
+          )
+    `);
 }
 
 
@@ -83,7 +120,8 @@ async function ensureLocalGitRepo(dir) {
             await fs.writeFile(path.join(dir, '.gitignore'), 'node_modules\n.env\ndist\n');
         }
 
-        await git.branch(['-M', 'main']).catch(() => {});
+        await git.branch(['-M', 'main']).catch(() => {
+        });
     }
 
     return git;
@@ -105,7 +143,8 @@ async function ensureRepo(project) {
         const name = project.slug;
         await octokit.repos.createForAuthenticatedUser({name, private: process.env.GITHUB_DEFAULT_PRIVATE !== 'false'});
         const url = `https://github.com/${process.env.GITHUB_OWNER}/${name}.git`;
-        await git.addRemote('origin', url).catch(() => {});
+        await git.addRemote('origin', url).catch(() => {
+        });
         await db.query(
             'UPDATE projects SET github_repo=$1,github_url=$2 WHERE id=$3',
             [`${process.env.GITHUB_OWNER}/${name}`, url.replace('.git', ''), project.id]
@@ -128,15 +167,34 @@ async function postJson(url, body) {
 }
 
 async function startAction(run, action, input = {}, source = 'workflow') {
+    // A stage may be bootstrapped again after an old/legacy execution failed.
+    // Close orphaned state before creating the next authoritative attempt.
+    await db.query(
+        `UPDATE run_actions
+         SET status = CASE
+                 WHEN status = 'retry_requested' THEN 'retried'
+                 ELSE 'failed'
+             END,
+             error = CASE
+                 WHEN status = 'running'
+                     THEN COALESCE(error, 'Superseded by a newer attempt')
+                 ELSE error
+             END,
+             finished_at = COALESCE(finished_at, NOW())
+         WHERE run_id=$1
+           AND action=$2
+           AND status IN ('running','retry_requested')`,
+        [run.id, action]
+    );
+
     const attempt = Number((await db.query(
         'SELECT COALESCE(MAX(attempt),0)+1 attempt FROM run_actions WHERE run_id=$1 AND action=$2',
         [run.id, action]
     )).rows[0].attempt);
 
     const row = (await db.query(
-        `INSERT INTO run_actions(run_id,action,attempt,status,source,input)
-         VALUES($1,$2,$3,'running',$4,$5::jsonb)
-         RETURNING *`,
+        `INSERT INTO run_actions(run_id, action, attempt, status, source, input)
+         VALUES ($1, $2, $3, 'running', $4, $5::jsonb) RETURNING *`,
         [run.id, action, attempt, source, JSON.stringify(input ?? {})]
     )).rows[0];
 
@@ -155,9 +213,10 @@ async function startAction(run, action, input = {}, source = 'workflow') {
 async function finishAction(actionRow, status, output = {}, error = null) {
     return (await db.query(
         `UPDATE run_actions
-         SET status=$1,output=$2::jsonb,error=$3,finished_at=NOW()
+         SET status=$1,
+             output=$2::jsonb,error=$3, finished_at=NOW()
          WHERE id=$4
-         RETURNING *`,
+             RETURNING *`,
         [status, JSON.stringify(output ?? {}), error, actionRow.id]
     )).rows[0];
 }
@@ -200,7 +259,10 @@ async function writeFilesForRun(run, files = [], agent = 'coder', attempt = 0, m
         'INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4::jsonb,$5)',
         [run.id, agent, attempt, JSON.stringify(files ?? []), sha]
     );
-    await event(run.id, run.project_id, agent, 'FILES_WRITTEN', `${files.length} files written`, {commitSha: sha, attempt});
+    await event(run.id, run.project_id, agent, 'FILES_WRITTEN', `${files.length} files written`, {
+        commitSha: sha,
+        attempt
+    });
     return {ok: true, commitSha: sha};
 }
 
@@ -305,7 +367,8 @@ app.get('/runs/:id', async (req, res) => {
     if (!run) return res.sendStatus(404);
     const events = (await db.query('SELECT * FROM run_events WHERE run_id=$1 ORDER BY id', [run.id])).rows;
     const actions = (await db.query(
-        `SELECT id,run_id,action,attempt,status,source,input,output,error,started_at,finished_at,n8n_execution_id
+        `SELECT id,
+                run_id, action, attempt, status, source, input, output, error, started_at, finished_at, n8n_execution_id
          FROM run_actions
          WHERE run_id=$1
          ORDER BY id`,
@@ -313,6 +376,7 @@ app.get('/runs/:id', async (req, res) => {
     )).rows;
     res.json({...run, events, actions});
 });
+
 function normalizeResumeUrl(resumeUrl) {
     if (!resumeUrl) return null;
 
@@ -323,10 +387,10 @@ function normalizeResumeUrl(resumeUrl) {
 
 async function getRunForStage(runId) {
     return (await db.query(
-        `SELECT r.*,p.slug,p.github_repo,p.status project_status
+        `SELECT r.*, p.slug, p.github_repo, p.status project_status
          FROM runs r
-         JOIN projects p ON p.id=r.project_id
-         WHERE r.id=$1`,
+                  JOIN projects p ON p.id = r.project_id
+         WHERE r.id = $1`,
         [runId]
     )).rows[0];
 }
@@ -399,8 +463,8 @@ async function executeStage(run, action) {
             });
 
             await db.query(
-                `INSERT INTO execution_results(run_id,attempt,command,exit_code,stdout,stderr,duration_ms)
-                 VALUES($1,$2,$3,$4,$5,$6,$7)`,
+                `INSERT INTO execution_results(run_id, attempt, command, exit_code, stdout, stderr, duration_ms)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                 [
                     run.id,
                     actionRow.attempt,
@@ -562,8 +626,11 @@ ${passed ? 'Succeeded' : 'Needs attention'}
 
             await db.query(
                 `UPDATE runs
-                 SET final_report=$1,status=$2,current_stage='report',finished_at=NOW()
-                 WHERE id=$3`,
+                 SET final_report=$1,
+                     status=$2,
+                     current_stage='report',
+                     finished_at=NOW()
+                 WHERE id = $3`,
                 [report, nextStatus, run.id]
             );
 
@@ -582,8 +649,10 @@ ${passed ? 'Succeeded' : 'Needs attention'}
         if (action !== 'planner' && action !== 'report') {
             await db.query(
                 `UPDATE runs
-                 SET status=$1,current_stage=$2,finished_at=NULL
-                 WHERE id=$3`,
+                 SET status=$1,
+                     current_stage=$2,
+                     finished_at=NULL
+                 WHERE id = $3`,
                 [nextStatus, nextStage, run.id]
             );
         }
@@ -612,14 +681,18 @@ ${passed ? 'Succeeded' : 'Needs attention'}
             continue: shouldContinue
         };
     } catch (error) {
-        await finishAction(actionRow, 'failed', {}, error.message).catch(() => {});
+        await finishAction(actionRow, 'failed', {}, error.message).catch(() => {
+        });
 
         await db.query(
             `UPDATE runs
-             SET status='waiting_retry',current_stage=$1,finished_at=NULL
-             WHERE id=$2`,
+             SET status='waiting_retry',
+                 current_stage=$1,
+                 finished_at=NULL
+             WHERE id = $2`,
             [action, run.id]
-        ).catch(() => {});
+        ).catch(() => {
+        });
 
         await event(
             run.id,
@@ -632,7 +705,8 @@ ${passed ? 'Succeeded' : 'Needs attention'}
                 attempt: actionRow.attempt,
                 error: error.message
             }
-        ).catch(() => {});
+        ).catch(() => {
+        });
 
         return {
             ok: false,
@@ -691,9 +765,11 @@ app.post('/runs/:id/actions/:action/wait', async (req, res) => {
     const actionRow = (await db.query(
         `SELECT *
          FROM run_actions
-         WHERE run_id=$1 AND action=$2 AND status='failed'
+         WHERE run_id = $1
+           AND action =$2
+           AND status='failed'
          ORDER BY attempt DESC
-         LIMIT 1`,
+             LIMIT 1`,
         [run.id, action]
     )).rows[0];
 
@@ -709,8 +785,8 @@ app.post('/runs/:id/actions/:action/wait', async (req, res) => {
          SET status='waiting_retry',
              resume_url=$1,
              n8n_execution_id=$2,
-             error=COALESCE($3,error)
-         WHERE id=$4`,
+             error=COALESCE($3, error)
+         WHERE id = $4`,
         [
             resumeUrl,
             req.body?.executionId ? String(req.body.executionId) : null,
@@ -721,8 +797,10 @@ app.post('/runs/:id/actions/:action/wait', async (req, res) => {
 
     await db.query(
         `UPDATE runs
-         SET status='waiting_retry',current_stage=$1,finished_at=NULL
-         WHERE id=$2`,
+         SET status='waiting_retry',
+             current_stage=$1,
+             finished_at=NULL
+         WHERE id = $2`,
         [action, run.id]
     );
 
@@ -777,33 +855,104 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
     const actionRow = (await db.query(
         `SELECT *
          FROM run_actions
-         WHERE run_id=$1
-           AND action=$2
+         WHERE run_id = $1
+           AND action =$2
            AND status='waiting_retry'
            AND resume_url IS NOT NULL
          ORDER BY attempt DESC
-         LIMIT 1`,
+             LIMIT 1`,
         [run.id, action]
     )).rows[0];
 
+    // Runs that failed before same-execution retry was introduced do not have a
+    // resume URL. They still need to be retryable, so dispatch the current stage
+    // through a fresh workflow execution instead of leaving the run stranded.
     if (!actionRow) {
-        return res.status(409).json({
-            error: 'This stage is not attached to a waiting n8n execution. Re-run the main workflow once to create a resumable wait.',
-            action
-        });
+        const previousStatus = run.status;
+
+        await db.query(
+            `UPDATE runs
+             SET status='running',
+                 finished_at=NULL
+             WHERE id=$1`,
+            [run.id]
+        );
+
+        await event(
+            run.id,
+            run.project_id,
+            'human',
+            'ACTION_RETRY_REQUESTED',
+            `Manager requested a fresh retry for ${action}`,
+            {action, mode: 'fresh_execution'}
+        );
+
+        try {
+            const workflow = action === 'planner'
+                ? 'coding-agent-plan'
+                : 'coding-agent-execute';
+
+            await trigger(workflow, {
+                runId: run.id,
+                projectId: run.project_id,
+                retry: true,
+                action
+            });
+
+            await event(
+                run.id,
+                run.project_id,
+                'api',
+                'ACTION_RETRY_DISPATCHED',
+                `${action} retry dispatched in a fresh n8n execution`,
+                {action, mode: 'fresh_execution', workflow}
+            );
+
+            return res.json({
+                ok: true,
+                action,
+                resumed: false,
+                dispatched: true,
+                mode: 'fresh_execution'
+            });
+        } catch (error) {
+            await db.query(
+                `UPDATE runs
+                 SET status=$1
+                 WHERE id=$2`,
+                [previousStatus, run.id]
+            ).catch(() => {
+            });
+
+            await event(
+                run.id,
+                run.project_id,
+                'api',
+                'ACTION_RETRY_DISPATCH_FAILED',
+                `Could not dispatch a fresh ${action} retry`,
+                {action, error: error.message}
+            ).catch(() => {
+            });
+
+            return res.status(502).json({
+                error: error.message,
+                action
+            });
+        }
     }
 
     await db.query(
         `UPDATE run_actions
          SET status='retry_requested'
-         WHERE id=$1`,
+         WHERE id = $1`,
         [actionRow.id]
     );
 
     await db.query(
         `UPDATE runs
-         SET status='running',finished_at=NULL
-         WHERE id=$1`,
+         SET status='running',
+             finished_at=NULL
+         WHERE id = $1`,
         [run.id]
     );
 
@@ -856,14 +1005,20 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
         });
     } catch (error) {
         await db.query(
-            `UPDATE run_actions SET status='waiting_retry' WHERE id=$1`,
+            `UPDATE run_actions
+             SET status='waiting_retry'
+             WHERE id = $1`,
             [actionRow.id]
-        ).catch(() => {});
+        ).catch(() => {
+        });
 
         await db.query(
-            `UPDATE runs SET status='waiting_retry' WHERE id=$1`,
+            `UPDATE runs
+             SET status='waiting_retry'
+             WHERE id = $1`,
             [run.id]
-        ).catch(() => {});
+        ).catch(() => {
+        });
 
         await event(
             run.id,
@@ -872,7 +1027,8 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
             'ACTION_RETRY_RESUME_FAILED',
             `Could not resume ${action} in n8n`,
             {action, error: error.message}
-        ).catch(() => {});
+        ).catch(() => {
+        });
 
         res.status(502).json({
             error: error.message,
@@ -913,12 +1069,11 @@ app.post('/runs/:id/state', async (req, res) => {
 app.post('/runs/:id/files', async (req, res) => {
     try {
         const run = (await db.query(
-            `SELECT
-                r.*,
-                p.slug,
-                p.github_repo
+            `SELECT r.*,
+                    p.slug,
+                    p.github_repo
              FROM runs r
-             JOIN projects p ON p.id = r.project_id
+                      JOIN projects p ON p.id = r.project_id
              WHERE r.id = $1`,
             [req.params.id]
         )).rows[0];
@@ -979,7 +1134,8 @@ app.post('/runs/:id/files', async (req, res) => {
         if (sha && run.github_repo && process.env.GITHUB_TOKEN) {
             const remote = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${run.github_repo}.git`;
             await git.push(remote, 'HEAD:main', ['--force-with-lease']).catch(() =>
-                git.push(remote, 'HEAD:main').catch(() => {})
+                git.push(remote, 'HEAD:main').catch(() => {
+                })
             );
         }
 
