@@ -1140,8 +1140,14 @@ app.post('/runs/:id/files', async (req, res) => {
         }
 
         await db.query(
-            'INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4,$5)',
-            [run.id, req.body.agent || 'coder', req.body.attempt || 0, req.body.files || [], sha]
+            'INSERT INTO code_versions(run_id,agent,attempt,files,commit_sha) VALUES($1,$2,$3,$4::jsonb,$5)',
+            [
+                run.id,
+                req.body.agent || 'coder',
+                req.body.attempt || 0,
+                JSON.stringify(req.body.files || []),
+                sha
+            ]
         );
 
         await event(
