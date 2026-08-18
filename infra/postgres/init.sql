@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS run_actions (
   input JSONB NOT NULL DEFAULT '{}'::jsonb,
   output JSONB NOT NULL DEFAULT '{}'::jsonb,
   error TEXT,
+  resume_url TEXT,
+  n8n_execution_id TEXT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ,
   UNIQUE(run_id, action, attempt)

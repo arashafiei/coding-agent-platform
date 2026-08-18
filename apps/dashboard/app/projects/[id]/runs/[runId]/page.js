@@ -165,9 +165,11 @@ export default function Run() {
         run.status === 'cancelled' ||
         run.status === 'succeeded';
 
-    const currentRetryAction = retryable.includes(run.current_stage)
-        ? run.current_stage
-        : null;
+    const currentRetryAction =
+        (run.status === 'waiting_retry' || run.status === 'failed') &&
+        retryable.includes(run.current_stage)
+            ? run.current_stage
+            : null;
 
     return (
         <main className="wrap">

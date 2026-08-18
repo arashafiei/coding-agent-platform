@@ -8,123 +8,34 @@
         "responseMode": "onReceived",
         "options": {}
       },
-      "id": "c99e004b-75c2-4917-83f4-569e779c90fb",
+      "id": "execute-webhook",
       "name": "Execute Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
         0
-      ]
-    },
-    {
-      "parameters": {
-        "url": "={{'http://api:4000' + '/runs/' + $('Execute Webhook').item.json.body.runId}}",
-        "options": {}
-      },
-      "id": "bd7aa65c-8be6-4f10-bf86-1e57cea9aafc",
-      "name": "Get Run",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        220,
-        0
-      ]
+      ],
+      "webhookId": "coding-agent-execute"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://agent-service:4100/coder",
+        "url": "={{'http://api:4000/runs/' + $('Execute Webhook').item.json.body.runId + '/stages/current/execute'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, humanFeedback: $('Get Run').item.json.human_feedback }) }}",
-        "options": {}
-      },
-      "id": "dfcea6b4-32ac-4ea9-8c19-3063bf968fc9",
-      "name": "Coder",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        440,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ files: $('Coder').item.json.files, agent: 'coder', attempt: 0, message: 'feat: agent generated initial implementation' }) }}",
-        "options": {}
-      },
-      "id": "cfaa93bd-5c06-4965-a19e-f63a3d1a626c",
-      "name": "Save Coder Files",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        660,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://runner:4200/execute",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ projectSlug: $('Get Run').item.json.slug, command: {{ $('Coder').item.json.testCommand || 'npm test' }} }) }",
+        "body": "={{ JSON.stringify({}) }}",
         "options": {
-          "timeout": 100000
+          "timeout": 120000
         }
       },
-      "id": "6f6639d9-9d2f-4088-92d2-2db0d9f8d49b",
-      "name": "Runner 1",
+      "id": "execute-current-stage",
+      "name": "Execute Current Stage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        900,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ ...$('Runner 1').item.json, attempt: 0, command: {{ $('Coder').item.json.testCommand || 'npm test' }} }) }",
-        "options": {}
-      },
-      "id": "77881210-6ec3-4fda-81f7-b17196479a56",
-      "name": "Save Execution 1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1120,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/reviewer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 1').item.json, attempt: 0 }) }",
-        "options": {}
-      },
-      "id": "181a8211-317a-4da1-bc04-43dd3f3d3abb",
-      "name": "Reviewer 1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1340,
+        260,
         0
       ]
     },
@@ -139,8 +50,8 @@
           },
           "conditions": [
             {
-              "id": "05442ac1-b154-47ba-b66a-e726e9459ee3",
-              "leftValue": "={{$json.passed}}",
+              "id": "stage-ok-condition",
+              "leftValue": "={{ $json.ok }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -153,109 +64,12 @@
         },
         "options": {}
       },
-      "id": "17025358-9872-416e-a69b-60e510c7736b",
-      "name": "Passed? 1",
+      "id": "stage-ok",
+      "name": "Stage OK?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1560,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/fixer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 1').item.json, review: $('Reviewer 1').item.json, attempt: 1 }) }",
-        "options": {}
-      },
-      "id": "ae71c57d-fff2-4029-92dd-05683ff1a21c",
-      "name": "Fixer 1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1780,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ files: $('Fixer 1').item.json.files, agent: 'fixer', attempt: 1, message: 'fix: agent repair attempt 1' }) }",
-        "options": {}
-      },
-      "id": "542061f1-70b8-4d43-9aee-d1b75b67bb05",
-      "name": "Apply Fix 1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2000,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://runner:4200/execute",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ projectSlug: $('Get Run').item.json.slug, command: { $('Fixer 1').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {
-          "timeout": 100000
-        }
-      },
-      "id": "90b62f63-28a3-4937-ac38-7e5b9f2dcc6e",
-      "name": "Runner 2",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1780,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ ...$('Runner 2').item.json, attempt: 1, command: { $('Fixer 1').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {}
-      },
-      "id": "a15f88d5-e964-4b1c-9063-08b4165cbec5",
-      "name": "Save Execution 2",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2000,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/reviewer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 2').item.json, attempt: 1 }) }",
-        "options": {}
-      },
-      "id": "1795ef76-4c8e-409b-8c74-e37ea0c01aa4",
-      "name": "Reviewer 2",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2220,
+        500,
         0
       ]
     },
@@ -270,8 +84,8 @@
           },
           "conditions": [
             {
-              "id": "33cd9307-9398-410f-a8ab-0d93f1af76b8",
-              "leftValue": "={{$json.passed}}",
+              "id": "continue-condition",
+              "leftValue": "={{ $json.continue }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -284,314 +98,49 @@
         },
         "options": {}
       },
-      "id": "5796ec1c-cbeb-44d7-84ac-6b0bb55fed8f",
-      "name": "Passed? 2",
+      "id": "continue-pipeline",
+      "name": "Continue Pipeline?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2440,
-        0
+        740,
+        -80
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://agent-service:4100/fixer",
+        "url": "={{'http://api:4000/runs/' + $('Execute Webhook').item.json.body.runId + '/actions/' + $('Execute Current Stage').item.json.action + '/wait'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 2').item.json, review: $('Reviewer 2').item.json, attempt: 2 }) }",
+        "body": "={{ JSON.stringify({ resumeUrl: $execution.resumeUrl, executionId: $execution.id, error: $('Execute Current Stage').item.json.error }) }}",
         "options": {}
       },
-      "id": "383dcc6c-7ec0-4fcd-814b-054b36f9ba3c",
-      "name": "Fixer 2",
+      "id": "register-retry-wait",
+      "name": "Register Retry Wait",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2660,
-        180
+        740,
+        160
       ]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ files: $('Fixer 2').item.json.files, agent: 'fixer', attempt: 2, message: 'fix: agent repair attempt 2' }) }",
+        "resume": "webhook",
+        "httpMethod": "POST",
         "options": {}
       },
-      "id": "3d69deef-40b4-4711-9f9d-1dfee95699b2",
-      "name": "Apply Fix 2",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "id": "wait-current-stage",
+      "name": "Wait for Current Stage Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
       "position": [
-        2880,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://runner:4200/execute",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ projectSlug: $('Get Run').item.json.slug, command: { $('Fixer 2').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {
-          "timeout": 100000
-        }
-      },
-      "id": "23480985-ee30-45a9-9744-b274d47fa69a",
-      "name": "Runner 3",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2660,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ ...$('Runner 3').item.json, attempt: 2, command: { $('Fixer 2').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {}
-      },
-      "id": "1f62b891-72f3-442f-9a70-ffa536a452ba",
-      "name": "Save Execution 3",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2880,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/reviewer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 3').item.json, attempt: 2 }) }",
-        "options": {}
-      },
-      "id": "8a181a07-de6d-44a5-ae9f-47b23121fdae",
-      "name": "Reviewer 3",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3100,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "30558d40-d463-47ae-9768-13fa70dc3a99",
-              "leftValue": "={{$json.passed}}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "e0fa4401-d53f-4773-85ac-23c5709f9e23",
-      "name": "Passed? 3",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3320,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/fixer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 3').item.json, review: $('Reviewer 3').item.json, attempt: 3 }) }",
-        "options": {}
-      },
-      "id": "24cd7ffa-b5bf-48bc-a6c8-d9ae3c50dca6",
-      "name": "Fixer 3",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3540,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/files'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ files: $('Fixer 3').item.json.files, agent: 'fixer', attempt: 3, message: 'fix: agent repair attempt 3' }) }",
-        "options": {}
-      },
-      "id": "3ba4f7b2-3dcf-4b27-8529-359989fb5a87",
-      "name": "Apply Fix 3",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3760,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://runner:4200/execute",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ projectSlug: $('Get Run').item.json.slug, command: { $('Fixer 3').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {
-          "timeout": 100000
-        }
-      },
-      "id": "82a0c80d-967f-4b6e-b1cb-e7185a09f181",
-      "name": "Runner 4",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3540,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/execution'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ ...$('Runner 4').item.json, attempt: 3, command: { $('Fixer 3').item.json.testCommand || $('Coder').item.json.testCommand || 'npm test' } }) }",
-        "options": {}
-      },
-      "id": "b6a25133-d5a2-47b9-a615-8d72322305c5",
-      "name": "Save Execution 4",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3760,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://agent-service:4100/reviewer",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={ JSON.stringify({ request: $('Get Run').item.json.request, plan: $('Get Run').item.json.plan, execution: $('Runner 4').item.json, attempt: 3 }) }",
-        "options": {}
-      },
-      "id": "41518866-287f-46aa-b109-05c36982bf66",
-      "name": "Reviewer 4",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3980,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "1236c194-c2d2-4db6-9071-62a5b3750f81",
-              "leftValue": "={{$json.passed}}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "a6f835f8-6167-4101-a850-92dfbe3124c4",
-      "name": "Passed? 4",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        4200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/state'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ status:'succeeded', currentStage:'report', finalReport:'Execution completed successfully.', event:{ source:'system', type:'RUN_COMPLETED', message:'Run completed successfully' } }) }}",
-        "options": {}
-      },
-      "id": "b3bcef16-2bf6-418c-87ec-cfcf22787ad1",
-      "name": "Mark Success",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        4500,
-        -180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{'http://api:4000' + '/runs/' + $('Get Run').item.json.id + '/state'}}",
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ status:'failed', currentStage:'report', fixAttempt:3, finalReport:'Failed after maximum repair attempts. See execution logs.', event:{ source:'system', type:'RUN_FAILED', message:'Run failed after 3 fix attempts' } }) }}",
-        "options": {}
-      },
-      "id": "8d3b606b-9cdf-4d55-b7aa-b5bc327bc17d",
-      "name": "Mark Failed",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        4500,
-        220
-      ]
+        980,
+        160
+      ],
+      "webhookId": "wait-current-stage-retry"
     }
   ],
   "connections": {
@@ -599,310 +148,70 @@
       "main": [
         [
           {
-            "node": "Get Run",
+            "node": "Execute Current Stage",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Run": {
+    "Execute Current Stage": {
       "main": [
         [
           {
-            "node": "Coder",
+            "node": "Stage OK?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Coder": {
+    "Stage OK?": {
       "main": [
         [
           {
-            "node": "Save Coder Files",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Coder Files": {
-      "main": [
-        [
-          {
-            "node": "Runner 1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Runner 1": {
-      "main": [
-        [
-          {
-            "node": "Save Execution 1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Execution 1": {
-      "main": [
-        [
-          {
-            "node": "Reviewer 1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reviewer 1": {
-      "main": [
-        [
-          {
-            "node": "Passed? 1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Passed? 1": {
-      "main": [
-        [
-          {
-            "node": "Mark Success",
+            "node": "Continue Pipeline?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Fixer 1",
+            "node": "Register Retry Wait",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fixer 1": {
+    "Continue Pipeline?": {
       "main": [
         [
           {
-            "node": "Apply Fix 1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Apply Fix 1": {
-      "main": [
-        [
-          {
-            "node": "Runner 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Runner 2": {
-      "main": [
-        [
-          {
-            "node": "Save Execution 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Execution 2": {
-      "main": [
-        [
-          {
-            "node": "Reviewer 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reviewer 2": {
-      "main": [
-        [
-          {
-            "node": "Passed? 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Passed? 2": {
-      "main": [
-        [
-          {
-            "node": "Mark Success",
+            "node": "Execute Current Stage",
             "type": "main",
             "index": 0
           }
         ],
+        []
+      ]
+    },
+    "Register Retry Wait": {
+      "main": [
         [
           {
-            "node": "Fixer 2",
+            "node": "Wait for Current Stage Retry",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Fixer 2": {
+    "Wait for Current Stage Retry": {
       "main": [
         [
           {
-            "node": "Apply Fix 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Apply Fix 2": {
-      "main": [
-        [
-          {
-            "node": "Runner 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Runner 3": {
-      "main": [
-        [
-          {
-            "node": "Save Execution 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Execution 3": {
-      "main": [
-        [
-          {
-            "node": "Reviewer 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reviewer 3": {
-      "main": [
-        [
-          {
-            "node": "Passed? 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Passed? 3": {
-      "main": [
-        [
-          {
-            "node": "Mark Success",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Fixer 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fixer 3": {
-      "main": [
-        [
-          {
-            "node": "Apply Fix 3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Apply Fix 3": {
-      "main": [
-        [
-          {
-            "node": "Runner 4",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Runner 4": {
-      "main": [
-        [
-          {
-            "node": "Save Execution 4",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Execution 4": {
-      "main": [
-        [
-          {
-            "node": "Reviewer 4",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reviewer 4": {
-      "main": [
-        [
-          {
-            "node": "Passed? 4",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Passed? 4": {
-      "main": [
-        [
-          {
-            "node": "Mark Success",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Mark Failed",
+            "node": "Execute Current Stage",
             "type": "main",
             "index": 0
           }
@@ -910,11 +219,11 @@
       ]
     }
   },
-  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "43e58eab-031e-4fc1-8919-e1ea61b9ad87",
+  "active": false,
+  "versionId": "same-execution-stage-retry-v1",
   "meta": {
     "templateCredsSetupCompleted": true
   },
