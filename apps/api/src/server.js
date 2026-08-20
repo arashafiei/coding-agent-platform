@@ -57,6 +57,10 @@ async function ensureSchema() {
         ADD COLUMN IF NOT EXISTS resume_url TEXT`);
     await db.query(`ALTER TABLE run_actions
         ADD COLUMN IF NOT EXISTS n8n_execution_id TEXT`);
+    await db.query(`ALTER TABLE run_actions
+        ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await db.query(`ALTER TABLE runs
+        ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '15 minutes')`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_run_actions_run_action ON run_actions(run_id, action, attempt DESC)`);
 
     // Clean up orphaned attempts created by the older retry implementation.
@@ -82,14 +86,29 @@ async function ensureSchema() {
 const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 async function event(runId, projectId, source, type, message, data = {}) {
-    const payload = {runId, projectId, source, type, message, data, ts: new Date().toISOString()};
-    await db.query(
-        'INSERT INTO run_events(project_id,run_id,source,type,message,data) VALUES($1,$2,$3,$4,$5,$6::jsonb)',
+    const stored = (await db.query(
+        `INSERT INTO run_events(project_id,run_id,source,type,message,data)
+         VALUES($1,$2,$3,$4,$5,$6::jsonb)
+         RETURNING id,created_at`,
         [projectId, runId, source, type, message, JSON.stringify(data ?? {})]
-    );
-    await redis.xadd(`run:${runId}:events`, '*', 'payload', JSON.stringify(payload));
-    await fs.mkdir(path.dirname(systemLog), {recursive: true});
-    await fs.appendFile(systemLog, JSON.stringify(payload) + '\n');
+    )).rows[0];
+    const payload = {
+        id: stored.id,
+        run_id: runId,
+        project_id: projectId,
+        source,
+        type,
+        message,
+        data,
+        created_at: stored.created_at,
+        ts: stored.created_at
+    };
+    await redis.xadd(`run:${runId}:events`, '*', 'payload', JSON.stringify(payload)).catch(error => {
+        console.warn(`Redis event delivery failed for run ${runId}: ${error.message}`);
+    });
+    fs.mkdir(path.dirname(systemLog), {recursive: true})
+        .then(() => fs.appendFile(systemLog, JSON.stringify(payload) + '\n'))
+        .catch(error => console.warn(`Event log append failed for run ${runId}: ${error.message}`));
 }
 
 async function trigger(pathname, body) {
@@ -127,6 +146,21 @@ async function ensureLocalGitRepo(dir) {
     return git;
 }
 
+async function readProjectFiles(dir, relative = '') {
+    const entries = await fs.readdir(path.join(dir, relative), {withFileTypes: true});
+    const files = [];
+    for (const entry of entries) {
+        if (['.git', 'node_modules', '.npm-cache'].includes(entry.name)) continue;
+        const filePath = path.join(relative, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await readProjectFiles(dir, filePath));
+        } else if (entry.isFile()) {
+            files.push({path: filePath, content: await fs.readFile(path.join(dir, filePath), 'utf8')});
+        }
+    }
+    return files;
+}
+
 async function ensureRepo(project) {
     const dir = path.join(workspace, project.slug);
     const git = await ensureLocalGitRepo(dir);
@@ -141,14 +175,20 @@ async function ensureRepo(project) {
     if (process.env.GITHUB_AUTO_CREATE_REPO === 'true' && process.env.GITHUB_TOKEN && process.env.GITHUB_OWNER && !project.github_repo) {
         const octokit = new Octokit({auth: process.env.GITHUB_TOKEN});
         const name = project.slug;
-        await octokit.repos.createForAuthenticatedUser({name, private: process.env.GITHUB_DEFAULT_PRIVATE !== 'false'});
-        const url = `https://github.com/${process.env.GITHUB_OWNER}/${name}.git`;
-        await git.addRemote('origin', url).catch(() => {
-        });
-        await db.query(
-            'UPDATE projects SET github_repo=$1,github_url=$2 WHERE id=$3',
-            [`${process.env.GITHUB_OWNER}/${name}`, url.replace('.git', ''), project.id]
-        );
+        try {
+            await octokit.repos.createForAuthenticatedUser({
+                name,
+                private: process.env.GITHUB_DEFAULT_PRIVATE !== 'false'
+            });
+            const url = `https://github.com/${process.env.GITHUB_OWNER}/${name}.git`;
+            await git.addRemote('origin', url).catch(() => {});
+            await db.query(
+                'UPDATE projects SET github_repo=$1,github_url=$2 WHERE id=$3',
+                [`${process.env.GITHUB_OWNER}/${name}`, url.replace('.git', ''), project.id]
+            );
+        } catch (error) {
+            console.warn(`GitHub repository creation skipped for ${name}: ${error.status || ''} ${error.message}`);
+        }
     }
 
     return dir;
@@ -156,47 +196,80 @@ async function ensureRepo(project) {
 
 
 async function postJson(url, body) {
-    const r = await fetch(url, {
-        method: 'POST',
-        headers: {'content-type': 'application/json'},
-        body: JSON.stringify(body)
-    });
+    const timeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 165000);
+    let r;
+
+    try {
+        r = await fetch(url, {
+            method: 'POST',
+            headers: {'content-type': 'application/json'},
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(timeoutMs)
+        });
+    } catch (error) {
+        if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+            throw new Error(`${url} timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+    }
+
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `${url} returned ${r.status}`);
     return data;
 }
 
 async function startAction(run, action, input = {}, source = 'workflow') {
-    // A stage may be bootstrapped again after an old/legacy execution failed.
-    // Close orphaned state before creating the next authoritative attempt.
-    await db.query(
-        `UPDATE run_actions
-         SET status = CASE
-                 WHEN status = 'retry_requested' THEN 'retried'
-                 ELSE 'failed'
-             END,
-             error = CASE
-                 WHEN status = 'running'
-                     THEN COALESCE(error, 'Superseded by a newer attempt')
-                 ELSE error
-             END,
-             finished_at = COALESCE(finished_at, NOW())
-         WHERE run_id=$1
-           AND action=$2
-           AND status IN ('running','retry_requested')`,
-        [run.id, action]
-    );
+    const client = await db.connect();
+    let row;
+    let attempt;
 
-    const attempt = Number((await db.query(
-        'SELECT COALESCE(MAX(attempt),0)+1 attempt FROM run_actions WHERE run_id=$1 AND action=$2',
-        [run.id, action]
-    )).rows[0].attempt);
+    try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [run.id]);
 
-    const row = (await db.query(
-        `INSERT INTO run_actions(run_id, action, attempt, status, source, input)
-         VALUES ($1, $2, $3, 'running', $4, $5::jsonb) RETURNING *`,
-        [run.id, action, attempt, source, JSON.stringify(input ?? {})]
-    )).rows[0];
+        const active = (await client.query(
+            `SELECT id FROM run_actions
+             WHERE run_id=$1 AND status='running'
+             LIMIT 1`,
+            [run.id]
+        )).rows[0];
+        if (active) {
+            const error = new Error(`Run already has an active action (${active.id})`);
+            error.code = 'ACTION_ALREADY_RUNNING';
+            throw error;
+        }
+
+        await client.query(
+            `UPDATE run_actions
+             SET status='retried', finished_at=COALESCE(finished_at, NOW())
+             WHERE run_id=$1 AND action=$2 AND status='retry_requested'`,
+            [run.id, action]
+        );
+
+        attempt = Number((await client.query(
+            'SELECT COALESCE(MAX(attempt),0)+1 attempt FROM run_actions WHERE run_id=$1 AND action=$2',
+            [run.id, action]
+        )).rows[0].attempt);
+
+        row = (await client.query(
+            `INSERT INTO run_actions(run_id, action, attempt, status, source, input, heartbeat_at)
+             VALUES ($1, $2, $3, 'running', $4, $5::jsonb, NOW()) RETURNING *`,
+            [run.id, action, attempt, source, JSON.stringify(input ?? {})]
+        )).rows[0];
+
+        await client.query(
+            `UPDATE runs
+             SET status='running', started_at=COALESCE(started_at, NOW()), finished_at=NULL
+             WHERE id=$1`,
+            [run.id]
+        );
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
 
     await event(
         run.id,
@@ -214,7 +287,7 @@ async function finishAction(actionRow, status, output = {}, error = null) {
     return (await db.query(
         `UPDATE run_actions
          SET status=$1,
-             output=$2::jsonb,error=$3, finished_at=NOW()
+             output=$2::jsonb,error=$3,heartbeat_at=NOW(),finished_at=NOW()
          WHERE id=$4
              RETURNING *`,
         [status, JSON.stringify(output ?? {}), error, actionRow.id]
@@ -395,15 +468,164 @@ async function getRunForStage(runId) {
     )).rows[0];
 }
 
+async function failRunWithReport(run, reason, eventType = 'RUN_LIMIT_EXCEEDED') {
+    const execution = (await db.query(
+        'SELECT * FROM execution_results WHERE run_id=$1 ORDER BY id DESC LIMIT 1',
+        [run.id]
+    )).rows[0];
+    const versions = (await db.query(
+        'SELECT agent,attempt,commit_sha,created_at FROM code_versions WHERE run_id=$1 ORDER BY id',
+        [run.id]
+    )).rows;
+    const report = `# Coding Agent Run Report
+
+## Request
+${run.request}
+
+## Plan
+${JSON.stringify(run.plan ?? {}, null, 2)}
+
+## Generated versions
+${versions.length ? versions.map(version => `- ${version.agent} attempt ${version.attempt}: ${version.commit_sha || 'no commit'}`).join('\n') : 'No code version was persisted.'}
+
+## Last execution
+${execution ? `Exit code: ${execution.exit_code}\n\nstdout:\n${execution.stdout}\n\nstderr:\n${execution.stderr}` : 'No sandbox execution result is available.'}
+
+## Result
+Failed: ${reason}
+`;
+
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            `UPDATE run_actions
+             SET status='failed',
+                 error=COALESCE(error, $1),
+                 heartbeat_at=NOW(),
+                 finished_at=NOW()
+             WHERE run_id=$2
+               AND status IN ('running','waiting_retry','retry_requested')`,
+            [reason, run.id]
+        );
+        await client.query(
+            `UPDATE runs
+             SET status='failed',current_stage='report',final_report=$1,finished_at=NOW()
+             WHERE id=$2`,
+            [report, run.id]
+        );
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+    await event(run.id, run.project_id, 'system', eventType, reason, {reason});
+    return {ok: false, action: run.current_stage, error: reason, status: 'failed', continue: false, terminal: true};
+}
+
+async function enforceRunDeadline(run) {
+    if (run.deadline_at && new Date(run.deadline_at).getTime() <= Date.now()) {
+        return failRunWithReport(run, 'Maximum total run time of 15 minutes exceeded');
+    }
+    return null;
+}
+
+async function recoverStaleRuns() {
+    const staleSeconds = Number(process.env.ACTION_STALE_SECONDS || 210);
+    await db.query(
+        `UPDATE run_actions action
+         SET status='succeeded',
+             output=run.plan,
+             error=NULL,
+             heartbeat_at=NOW(),
+             finished_at=NOW()
+         FROM runs run
+         WHERE action.run_id=run.id
+           AND action.action='planner'
+           AND action.status='running'
+           AND run.status='awaiting_approval'
+           AND run.current_stage='human_approval'
+           AND run.plan IS NOT NULL`
+    );
+    await db.query(
+        `UPDATE run_actions action
+         SET status='failed',
+             error=COALESCE(action.error, 'Parent run already reached a terminal state'),
+             heartbeat_at=NOW(),
+             finished_at=NOW()
+         FROM runs run
+         WHERE action.run_id=run.id
+           AND run.status IN ('succeeded','failed','cancelled')
+           AND action.status IN ('running','waiting_retry','retry_requested')`
+    );
+    const staleActions = (await db.query(
+        `UPDATE run_actions
+         SET status='failed',
+             error=COALESCE(error, 'Action heartbeat expired'),
+             heartbeat_at=NOW(),
+             finished_at=NOW()
+         WHERE status='running'
+           AND heartbeat_at < NOW() - ($1 * INTERVAL '1 second')
+         RETURNING run_id,action,attempt,error`,
+        [staleSeconds]
+    )).rows;
+
+    for (const stale of staleActions) {
+        const run = (await db.query(
+            `UPDATE runs
+             SET status='waiting_retry',current_stage=$1,finished_at=NULL
+             WHERE id=$2 AND status='running'
+             RETURNING *`,
+            [stale.action, stale.run_id]
+        )).rows[0];
+        if (run) {
+            await event(run.id, run.project_id, 'watchdog', 'STALE_ACTION_RECOVERED',
+                `${stale.action} attempt #${stale.attempt} stopped sending heartbeats`, stale);
+        }
+    }
+
+    const expiredRuns = (await db.query(
+        `SELECT * FROM runs
+         WHERE deadline_at <= NOW()
+           AND status NOT IN ('succeeded','failed','cancelled')`
+    )).rows;
+    for (const run of expiredRuns) {
+        await failRunWithReport(run, 'Maximum total run time of 15 minutes exceeded');
+    }
+}
+
 async function executeStage(run, action) {
     const allowed = ['planner', 'coder', 'runner', 'reviewer', 'fixer', 'git', 'report'];
     if (!allowed.includes(action)) {
         throw new Error(`Unsupported stage: ${action}`);
     }
 
-    const actionRow = await startAction(run, action, {currentStage: run.current_stage}, 'workflow');
-
+    let actionRow;
     try {
+        const deadlineResult = await enforceRunDeadline(run);
+        if (deadlineResult) return deadlineResult;
+
+        if (action === 'fixer') {
+            const maxFixAttempts = Number(process.env.MAX_FIX_ATTEMPTS || 3);
+            const attempts = Number((await db.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM run_actions
+                 WHERE run_id=$1 AND action='fixer'`,
+                [run.id]
+            )).rows[0].count);
+            if (attempts >= maxFixAttempts) {
+                return failRunWithReport(
+                    run,
+                    `Fixer exhausted its ${maxFixAttempts} total attempts`,
+                    'FIXER_ATTEMPT_LIMIT_EXCEEDED'
+                );
+            }
+        }
+
+        actionRow = await startAction(run, action, {currentStage: run.current_stage}, 'workflow');
+
         let output = {};
         let nextStage = action;
         let nextStatus = 'running';
@@ -508,7 +730,8 @@ async function executeStage(run, action) {
                 attempt: actionRow.attempt
             });
 
-            nextStage = output.passed ? 'report' : 'fixer';
+            const maxFixAttempts = Number(process.env.MAX_FIX_ATTEMPTS || 3);
+            nextStage = output.passed ? 'git' : (run.fix_attempt >= maxFixAttempts ? 'report' : 'fixer');
 
             await event(
                 run.id,
@@ -531,10 +754,19 @@ async function executeStage(run, action) {
 
             if (!execution) throw new Error('Fixer requires a previous Runner execution');
 
-            const latestFiles = (await db.query(
-                'SELECT files FROM code_versions WHERE run_id=$1 ORDER BY id DESC LIMIT 1',
+            const latestFiles = await readProjectFiles(path.join(workspace, run.slug));
+            const latestReview = (await db.query(
+                `SELECT output FROM run_actions
+                 WHERE run_id=$1 AND action='reviewer' AND status='succeeded'
+                 ORDER BY id DESC LIMIT 1`,
                 [run.id]
-            )).rows[0]?.files || [];
+            )).rows[0]?.output || {};
+            const fixHistory = (await db.query(
+                `SELECT attempt,output,error FROM run_actions
+                 WHERE run_id=$1 AND action='fixer'
+                 ORDER BY attempt`,
+                [run.id]
+            )).rows;
 
             output = await postJson('http://agent-service:4100/fixer', {
                 request: run.request,
@@ -545,11 +777,12 @@ async function executeStage(run, action) {
                     stderr: execution.stderr
                 },
                 currentFiles: latestFiles,
-                previousAttempts: run.fix_attempt,
+                recommendedFixes: latestReview.recommendedFixes || [],
+                previousAttempts: fixHistory,
                 attempt: run.fix_attempt + 1
             });
 
-            const fixAttempt = run.fix_attempt + 1;
+            const fixAttempt = actionRow.attempt;
 
             await writeFilesForRun(
                 run,
@@ -595,6 +828,10 @@ async function executeStage(run, action) {
                 'SELECT * FROM execution_results WHERE run_id=$1 ORDER BY id DESC LIMIT 1',
                 [run.id]
             )).rows[0];
+            const latestVersion = (await db.query(
+                'SELECT agent,attempt,files,commit_sha FROM code_versions WHERE run_id=$1 ORDER BY id DESC LIMIT 1',
+                [run.id]
+            )).rows[0];
 
             const passed = execution?.exit_code === 0;
 
@@ -605,6 +842,11 @@ ${run.request}
 
 ## Plan
 ${JSON.stringify(run.plan ?? {}, null, 2)}
+
+## Generated files
+${latestVersion?.files?.length
+    ? latestVersion.files.map(file => `- ${file.path}`).join('\n')
+    : 'No generated files were persisted.'}
 
 ## Execution
 ${execution ? `Exit code: ${execution.exit_code}
@@ -681,8 +923,22 @@ ${passed ? 'Succeeded' : 'Needs attention'}
             continue: shouldContinue
         };
     } catch (error) {
-        await finishAction(actionRow, 'failed', {}, error.message).catch(() => {
-        });
+        if (error.code === 'ACTION_ALREADY_RUNNING') {
+            return {ok: true, action, duplicate: true, continue: false};
+        }
+        if (actionRow) {
+            await finishAction(actionRow, 'failed', {}, error.message).catch(() => {
+            });
+        }
+
+        const maxFixAttempts = Number(process.env.MAX_FIX_ATTEMPTS || 3);
+        if (action === 'fixer' && Number(actionRow?.attempt || 0) >= maxFixAttempts) {
+            return failRunWithReport(
+                run,
+                `Fixer attempt ${actionRow.attempt} of ${maxFixAttempts} failed: ${error.message}`,
+                'FIXER_ATTEMPT_LIMIT_EXCEEDED'
+            );
+        }
 
         await db.query(
             `UPDATE runs
@@ -699,10 +955,10 @@ ${passed ? 'Succeeded' : 'Needs attention'}
             run.project_id,
             action,
             'ACTION_FAILED',
-            `${action} attempt #${actionRow.attempt} failed`,
+            `${action} attempt #${actionRow?.attempt ?? 'unknown'} failed`,
             {
                 action,
-                attempt: actionRow.attempt,
+                attempt: actionRow?.attempt ?? null,
                 error: error.message
             }
         ).catch(() => {
@@ -711,7 +967,7 @@ ${passed ? 'Succeeded' : 'Needs attention'}
         return {
             ok: false,
             action,
-            attempt: actionRow.attempt,
+            attempt: actionRow?.attempt ?? null,
             error: error.message,
             continue: false
         };
@@ -747,9 +1003,9 @@ app.post('/runs/:id/stages/current/execute', async (req, res) => {
 });
 
 app.post('/runs/:id/actions/:action/wait', async (req, res) => {
-    const {action} = req.params;
     const run = await getRunForStage(req.params.id);
     if (!run) return res.sendStatus(404);
+    const action = req.params.action === 'current' ? run.current_stage : req.params.action;
 
     if (run.current_stage !== action) {
         return res.status(409).json({
@@ -762,7 +1018,7 @@ app.post('/runs/:id/actions/:action/wait', async (req, res) => {
         return res.status(400).json({error: 'resumeUrl is required'});
     }
 
-    const actionRow = (await db.query(
+    let actionRow = (await db.query(
         `SELECT *
          FROM run_actions
          WHERE run_id = $1
@@ -774,10 +1030,42 @@ app.post('/runs/:id/actions/:action/wait', async (req, res) => {
     )).rows[0];
 
     if (!actionRow) {
-        return res.status(409).json({
-            error: 'No failed action attempt is available to wait for retry',
-            action
-        });
+        // n8n can fail before the API stage endpoint is reached at all. Record
+        // that infrastructure failure as a real attempt so the run remains
+        // observable and retryable instead of staying in planning/running.
+        const client = await db.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [run.id]);
+            const attempt = Number((await client.query(
+                'SELECT COALESCE(MAX(attempt),0)+1 attempt FROM run_actions WHERE run_id=$1 AND action=$2',
+                [run.id, action]
+            )).rows[0].attempt);
+            actionRow = (await client.query(
+                `INSERT INTO run_actions
+                    (run_id,action,attempt,status,source,input,error,resume_url,n8n_execution_id,heartbeat_at,finished_at)
+                 VALUES ($1,$2,$3,'waiting_retry','n8n','{}'::jsonb,$4,$5,$6,NOW(),NOW())
+                 RETURNING *`,
+                [run.id, action, attempt, req.body?.error || 'n8n failed before stage start', resumeUrl,
+                    req.body?.executionId ? String(req.body.executionId) : null]
+            )).rows[0];
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    const maxFixAttempts = Number(process.env.MAX_FIX_ATTEMPTS || 3);
+    if (action === 'fixer' && Number(actionRow.attempt) >= maxFixAttempts) {
+        const result = await failRunWithReport(
+            run,
+            `Fixer attempt ${actionRow.attempt} of ${maxFixAttempts} failed: ${req.body?.error || actionRow.error || 'unknown error'}`,
+            'FIXER_ATTEMPT_LIMIT_EXCEEDED'
+        );
+        return res.json({...result, attempt: actionRow.attempt, terminal: true});
     }
 
     await db.query(
@@ -852,6 +1140,24 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
         });
     }
 
+    if (action === 'fixer') {
+        const maxFixAttempts = Number(process.env.MAX_FIX_ATTEMPTS || 3);
+        const attempts = Number((await db.query(
+            `SELECT COUNT(*)::int AS count
+             FROM run_actions
+             WHERE run_id=$1 AND action='fixer'`,
+            [run.id]
+        )).rows[0].count);
+        if (attempts >= maxFixAttempts) {
+            const result = await failRunWithReport(
+                run,
+                `Fixer exhausted its ${maxFixAttempts} total attempts`,
+                'FIXER_ATTEMPT_LIMIT_EXCEEDED'
+            );
+            return res.status(409).json(result);
+        }
+    }
+
     const actionRow = (await db.query(
         `SELECT *
          FROM run_actions
@@ -868,16 +1174,6 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
     // resume URL. They still need to be retryable, so dispatch the current stage
     // through a fresh workflow execution instead of leaving the run stranded.
     if (!actionRow) {
-        const previousStatus = run.status;
-
-        await db.query(
-            `UPDATE runs
-             SET status='running',
-                 finished_at=NULL
-             WHERE id=$1`,
-            [run.id]
-        );
-
         await event(
             run.id,
             run.project_id,
@@ -916,14 +1212,6 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
                 mode: 'fresh_execution'
             });
         } catch (error) {
-            await db.query(
-                `UPDATE runs
-                 SET status=$1
-                 WHERE id=$2`,
-                [previousStatus, run.id]
-            ).catch(() => {
-            });
-
             await event(
                 run.id,
                 run.project_id,
@@ -946,14 +1234,6 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
          SET status='retry_requested'
          WHERE id = $1`,
         [actionRow.id]
-    );
-
-    await db.query(
-        `UPDATE runs
-         SET status='running',
-             finished_at=NULL
-         WHERE id = $1`,
-        [run.id]
     );
 
     await event(
@@ -1004,22 +1284,6 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
             n8nExecutionId: actionRow.n8n_execution_id
         });
     } catch (error) {
-        await db.query(
-            `UPDATE run_actions
-             SET status='waiting_retry'
-             WHERE id = $1`,
-            [actionRow.id]
-        ).catch(() => {
-        });
-
-        await db.query(
-            `UPDATE runs
-             SET status='waiting_retry'
-             WHERE id = $1`,
-            [run.id]
-        ).catch(() => {
-        });
-
         await event(
             run.id,
             run.project_id,
@@ -1030,10 +1294,53 @@ app.post('/runs/:id/actions/:action/retry', async (req, res) => {
         ).catch(() => {
         });
 
-        res.status(502).json({
-            error: error.message,
-            action
-        });
+        const workflow = action === 'planner'
+            ? 'coding-agent-plan'
+            : 'coding-agent-execute';
+
+        try {
+            await trigger(workflow, {
+                runId: run.id,
+                projectId: run.project_id,
+                retry: true,
+                action
+            });
+
+            await event(
+                run.id,
+                run.project_id,
+                'api',
+                'ACTION_RETRY_DISPATCHED',
+                `${action} retry dispatched after the previous n8n execution had already finished`,
+                {action, mode: 'fresh_execution', workflow}
+            );
+
+            res.json({
+                ok: true,
+                action,
+                resumed: false,
+                dispatched: true,
+                mode: 'fresh_execution'
+            });
+        } catch (dispatchError) {
+            await db.query(
+                `UPDATE run_actions SET status='waiting_retry' WHERE id=$1`,
+                [actionRow.id]
+            ).catch(() => {});
+            await db.query(
+                `UPDATE runs SET status='waiting_retry' WHERE id=$1`,
+                [run.id]
+            ).catch(() => {});
+            await event(
+                run.id,
+                run.project_id,
+                'api',
+                'ACTION_RETRY_DISPATCH_FAILED',
+                `Could not dispatch a fresh ${action} retry`,
+                {action, resumeError: error.message, dispatchError: dispatchError.message}
+            ).catch(() => {});
+            res.status(502).json({error: dispatchError.message, action});
+        }
     }
 });
 
@@ -1174,7 +1481,12 @@ app.get('/runs/:id/events', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    let last = '$';
+    res.flushHeaders();
+    res.write('retry: 2000\n\n');
+    // Replay the stream from the beginning. Event payloads carry their database
+    // id, so the dashboard can safely de-duplicate this replay against its
+    // initial REST snapshot without losing events in the connection race.
+    let last = '0-0';
     const key = `run:${req.params.id}:events`;
     const loop = async () => {
         while (!res.writableEnded) {
@@ -1197,7 +1509,14 @@ app.get('/runs/:id/events', async (req, res) => {
     loop();
 });
 ensureSchema()
-    .then(() => app.listen(port, '0.0.0.0', () => console.log(`api listening ${port}`)))
+    .then(async () => {
+        await recoverStaleRuns();
+        const watchdog = setInterval(() => {
+            recoverStaleRuns().catch(error => console.error('pipeline watchdog failed', error));
+        }, Number(process.env.WATCHDOG_INTERVAL_MS || 15000));
+        watchdog.unref();
+        app.listen(port, '0.0.0.0', () => console.log(`api listening ${port}`));
+    })
     .catch(err => {
         console.error('database bootstrap failed', err);
         process.exit(1);

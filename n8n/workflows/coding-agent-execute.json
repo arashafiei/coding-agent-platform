@@ -27,17 +27,18 @@
         "rawContentType": "application/json",
         "body": "={{ JSON.stringify({}) }}",
         "options": {
-          "timeout": 120000
+          "timeout": 300000
         }
       },
       "id": "execute-current-stage",
-      "name": "Execute Current Stage",
+      "name": "Execute Current Agent (Coder Runner Reviewer Fixer Report)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         260,
         0
-      ]
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -110,11 +111,11 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{'http://api:4000/runs/' + $('Execute Webhook').item.json.body.runId + '/actions/' + $('Execute Current Stage').item.json.action + '/wait'}}",
+        "url": "={{'http://api:4000/runs/' + $('Execute Webhook').item.json.body.runId + '/actions/current/wait'}}",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ resumeUrl: $execution.resumeUrl, executionId: $execution.id, error: $('Execute Current Stage').item.json.error }) }}",
+        "body": "={{ JSON.stringify({ resumeUrl: $execution.resumeUrl, executionId: $execution.id, error: $('Execute Current Agent (Coder Runner Reviewer Fixer Report)').item.json.error || $('Execute Current Agent (Coder Runner Reviewer Fixer Report)').item.json.message || 'n8n stage request failed' }) }}",
         "options": {}
       },
       "id": "register-retry-wait",
@@ -148,14 +149,14 @@
       "main": [
         [
           {
-            "node": "Execute Current Stage",
+            "node": "Execute Current Agent (Coder Runner Reviewer Fixer Report)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Execute Current Stage": {
+    "Execute Current Agent (Coder Runner Reviewer Fixer Report)": {
       "main": [
         [
           {
@@ -188,7 +189,7 @@
       "main": [
         [
           {
-            "node": "Execute Current Stage",
+            "node": "Execute Current Agent (Coder Runner Reviewer Fixer Report)",
             "type": "main",
             "index": 0
           }
@@ -211,7 +212,7 @@
       "main": [
         [
           {
-            "node": "Execute Current Stage",
+            "node": "Execute Current Agent (Coder Runner Reviewer Fixer Report)",
             "type": "main",
             "index": 0
           }
@@ -220,7 +221,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "executionTimeout": 900
   },
   "active": false,
   "versionId": "same-execution-stage-retry-v1",

@@ -27,7 +27,7 @@
         "rawContentType": "application/json",
         "body": "={{ JSON.stringify({}) }}",
         "options": {
-          "timeout": 120000
+          "timeout": 300000
         }
       },
       "id": "execute-planner-stage",
@@ -37,7 +37,8 @@
       "position": [
         240,
         0
-      ]
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -80,7 +81,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ resumeUrl: $execution.resumeUrl, executionId: $execution.id, error: $('Execute Planner Stage').item.json.error }) }}",
+        "body": "={{ JSON.stringify({ resumeUrl: $execution.resumeUrl, executionId: $execution.id, error: $('Execute Planner Stage').item.json.error || $('Execute Planner Stage').item.json.message || 'n8n planner request failed' }) }}",
         "options": {}
       },
       "id": "register-planner-wait",
@@ -168,7 +169,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "executionTimeout": 900
   },
   "active": false,
   "versionId": "same-execution-plan-retry-v1",
