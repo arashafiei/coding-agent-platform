@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="نمای تعاملی معماری و جریان اجرای Coding Agent Platform">
+  <title>Coding Agent Platform — System Flow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b16;
+      --surface: #0f172a;
+      --surface-2: #131e35;
+      --border: #273653;
+      --text: #e7eefc;
+      --muted: #94a3b8;
+      --blue: #60a5fa;
+      --green: #34d399;
+      --amber: #fbbf24;
+      --red: #fb7185;
+      --purple: #a78bfa;
+      --line: #405174;
+      --shadow: 0 24px 70px rgba(0, 0, 0, .35);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 4%, rgba(96, 165, 250, .16), transparent 27rem),
+        radial-gradient(circle at 88% 14%, rgba(167, 139, 250, .13), transparent 25rem),
+        var(--bg);
+      font-family: Tahoma, Arial, sans-serif;
+      line-height: 1.8;
+    }
+
+    a { color: inherit; }
+    code { color: #bfdbfe; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: auto; }
+
+    .hero { padding: 72px 0 42px; text-align: center; }
+    .eyebrow, .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(96, 165, 250, .35);
+      border-radius: 999px;
+      padding: 5px 11px;
+      background: rgba(30, 64, 175, .15);
+      color: #bfdbfe;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .eyebrow::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(52, 211, 153, .1); }
+    h1 { margin: 18px 0 12px; font-size: clamp(34px, 6vw, 68px); line-height: 1.12; letter-spacing: -2px; }
+    .gradient { background: linear-gradient(90deg, #93c5fd, #c4b5fd, #6ee7b7); color: transparent; background-clip: text; -webkit-background-clip: text; }
+    .lead { max-width: 780px; margin: auto; color: #b6c2d7; font-size: clamp(15px, 2vw, 19px); }
+    .hero-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .button { padding: 10px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); text-decoration: none; font-size: 13px; font-weight: 700; }
+    .button.primary { background: #e7eefc; color: #0f172a; border-color: #e7eefc; }
+
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 48px; }
+    .stat, .panel { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(19, 30, 53, .94), rgba(12, 19, 35, .94)); box-shadow: var(--shadow); }
+    .stat { padding: 16px; border-radius: 14px; }
+    .stat strong { display: block; font-size: 22px; color: white; }
+    .stat span { color: var(--muted); font-size: 12px; }
+
+    section { margin: 0 0 54px; scroll-margin-top: 24px; }
+    .section-head { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 17px; }
+    h2 { margin: 0; font-size: clamp(24px, 4vw, 36px); }
+    h3 { margin: 0 0 8px; font-size: 17px; }
+    .section-head p, .muted { margin: 0; color: var(--muted); }
+    .section-head p { max-width: 590px; font-size: 14px; }
+    .panel { border-radius: 18px; padding: 22px; overflow: hidden; }
+
+    .flow-scroll { overflow-x: auto; padding: 9px 2px 16px; }
+    .flow { direction: ltr; display: flex; align-items: stretch; min-width: 980px; }
+    .flow-node { position: relative; width: 142px; min-height: 112px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: #101a30; text-align: center; direction: rtl; }
+    .flow-node strong { font-size: 14px; }
+    .flow-node small { color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .flow-node .icon { display: grid; place-items: center; width: 31px; height: 31px; margin-bottom: 7px; border-radius: 9px; background: rgba(96, 165, 250, .12); color: var(--blue); font-family: ui-monospace, monospace; font-weight: 900; }
+    .connector { position: relative; flex: 1; min-width: 28px; align-self: center; height: 2px; background: var(--line); overflow: hidden; }
+    .connector::after { content: ''; position: absolute; inset: 0; width: 42%; background: linear-gradient(90deg, transparent, var(--blue), transparent); animation: travel 2s linear infinite; }
+    @keyframes travel { from { transform: translateX(-130%); } to { transform: translateX(340%); } }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .legend i { display: inline-block; width: 8px; height: 8px; margin-left: 5px; border-radius: 50%; background: var(--blue); }
+    .legend .green { background: var(--green); } .legend .amber { background: var(--amber); } .legend .purple { background: var(--purple); }
+
+    .pipeline { direction: ltr; display: grid; grid-template-columns: repeat(8, minmax(100px, 1fr)); min-width: 900px; padding: 13px 0 5px; }
+    .step { position: relative; text-align: center; direction: rtl; }
+    .step:not(:last-child)::before { content: ''; position: absolute; top: 16px; left: -50%; width: 100%; height: 3px; background: linear-gradient(90deg, var(--green), #3b82f6); }
+    .dot { position: relative; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; margin: auto; border: 2px solid var(--green); border-radius: 50%; background: #08714f; color: white; font-weight: 900; }
+    .step strong { display: block; margin-top: 9px; font-size: 12px; }
+    .step small { color: var(--muted); font-size: 10px; }
+
+    .branch { display: grid; grid-template-columns: 1fr 160px 1fr; align-items: center; gap: 16px; margin-top: 25px; }
+    .branch-card { padding: 15px; border: 1px solid var(--border); border-radius: 13px; background: rgba(7, 11, 22, .55); }
+    .branch-card.pass { border-color: rgba(52, 211, 153, .4); } .branch-card.fail { border-color: rgba(251, 113, 133, .4); }
+    .decision { display: grid; place-items: center; min-height: 92px; border: 1px dashed #627395; border-radius: 50%; color: #dbeafe; font-weight: 800; text-align: center; }
+
+    .graph-wrap { direction: ltr; display: grid; grid-template-columns: 130px 48px 160px 48px 170px 48px 150px; justify-content: center; align-items: center; min-width: 850px; padding: 15px 0; }
+    .graph-node { direction: rtl; padding: 15px 11px; border: 1px solid var(--border); border-radius: 13px; background: #101a30; text-align: center; }
+    .graph-node.generate { border-color: rgba(96,165,250,.6); } .graph-node.validate { border-color: rgba(167,139,250,.6); } .graph-node.repair { border-color: rgba(251,191,36,.6); } .graph-node.end { border-color: rgba(52,211,153,.6); }
+    .arrow { color: var(--blue); text-align: center; font-size: 24px; }
+    .repair-loop { width: min(600px, 90%); margin: 18px auto 0; padding: 12px 16px; border: 1px dashed rgba(251,191,36,.55); border-radius: 12px; color: #fde68a; text-align: center; font-size: 12px; }
+
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
+    .card { padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: rgba(15, 23, 42, .72); }
+    .card p, .card li { color: #aab7cd; font-size: 13px; }
+    .card ul { margin: 8px 0 0; padding-right: 18px; }
+    .tag { display: inline-block; margin-bottom: 10px; padding: 3px 8px; border-radius: 7px; background: rgba(167,139,250,.14); color: #ddd6fe; font: 11px ui-monospace, monospace; }
+
+    .timeline { list-style: none; margin: 0; padding: 0; counter-reset: demo; }
+    .timeline li { position: relative; margin-right: 17px; padding: 0 32px 25px 0; border-right: 2px solid #334155; counter-increment: demo; }
+    .timeline li:last-child { border-color: transparent; }
+    .timeline li::before { content: counter(demo); position: absolute; right: -17px; top: 0; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #1d4ed8; border: 4px solid #11182d; color: white; font-size: 12px; font-weight: 900; }
+    .timeline b { display: block; margin-bottom: 3px; }
+    .timeline span { color: var(--muted); font-size: 13px; }
+
+    .callout { display: flex; gap: 15px; align-items: flex-start; padding: 18px; border: 1px solid rgba(52, 211, 153, .34); border-radius: 14px; background: rgba(6, 95, 70, .12); }
+    .callout strong { color: #a7f3d0; }
+    footer { margin-top: 60px; padding: 27px 0 40px; border-top: 1px solid #1f2b43; color: var(--muted); text-align: center; font-size: 12px; }
+
+    @media (max-width: 850px) {
+      .stats, .cards { grid-template-columns: repeat(2, 1fr); }
+      .section-head { display: block; }
+      .section-head p { margin-top: 8px; }
+      .branch { grid-template-columns: 1fr; }
+      .decision { min-height: 70px; border-radius: 14px; }
+    }
+    @media (max-width: 520px) {
+      .shell { width: min(100% - 20px, 1180px); }
+      .hero { padding-top: 48px; }
+      .stats, .cards { grid-template-columns: 1fr; }
+      .panel { padding: 15px; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: white; color: #111827; }
+      .hero-actions { display: none; }
+      .panel, .stat, .card { color: #111827; background: white; box-shadow: none; break-inside: avoid; }
+      .muted, .section-head p, .card p, .card li, .flow-node small, .step small { color: #475569; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero shell">
+    <span class="eyebrow">Demo Architecture</span>
+    <h1>جریان کامل <span class="gradient">Coding Agent Platform</span></h1>
+    <p class="lead">نمای مستقل و قابل‌ارائه از همکاری n8n، LangChain، LangGraph، مدل Luna، Docker Sandbox، پایگاه داده و GitHub؛ از درخواست کاربر تا کد تست‌شده و گزارش نهایی.</p>
+    <nav class="hero-actions" aria-label="دسترسی سریع">
+      <a class="button primary" href="#system">معماری سیستم</a>
+      <a class="button" href="#pipeline">فلو اجرا</a>
+      <a class="button" href="#langgraph">LangGraph</a>
+      <a class="button" href="#demo">سناریوی دمو</a>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <div class="stats">
+      <div class="stat"><strong>4</strong><span>نقش مستقل Agent</span></div>
+      <div class="stat"><strong>2</strong><span>Workflow فعال n8n</span></div>
+      <div class="stat"><strong>3</strong><span>حداکثر تلاش Fixer</span></div>
+      <div class="stat"><strong>15m</strong><span>مهلت کل هر Run</span></div>
+    </div>
+
+    <section id="system">
+      <div class="section-head">
+        <div><span class="badge">01 · System Architecture</span><h2>معماری کلان سیستم</h2></div>
+        <p>n8n ترتیب مراحل را مدیریت می‌کند، API منبع حقیقت State است و Agent Service منطق مبتنی بر LangGraph را با مدل Luna API اجرا می‌کند.</p>
+      </div>
+      <div class="panel">
+        <div class="flow-scroll">
+          <div class="flow">
+            <div class="flow-node"><span class="icon">U</span><strong>کاربر</strong><small>ثبت درخواست و تأیید Plan</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">UI</span><strong>Dashboard</strong><small>مدیریت Run و نمایش زنده SSE</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">API</span><strong>Platform API</strong><small>State transition و persistence</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">n8n</span><strong>n8n</strong><small>Orchestration و wait/resume</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">LG</span><strong>Agent Service</strong><small>LangChain + LangGraph + Luna</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">DX</span><strong>Docker Runner</strong><small>اجرای ایزوله با محدودیت منابع</small></div><span class="connector"></span>
+            <div class="flow-node"><span class="icon">DB</span><strong>PostgreSQL</strong><small>Run، Action، Version و Result</small></div>
+          </div>
+        </div>
+        <div class="legend"><span><i></i> جریان کنترل</span><span><i class="green"></i> ذخیره پایدار</span><span><i class="purple"></i> تصمیم مدل</span><span><i class="amber"></i> اجرای Sandbox</span></div>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <div class="section-head">
+        <div><span class="badge">02 · n8n Workflow</span><h2>چرخه اجرای یک Run</h2></div>
+        <p>دو Workflow مجزا داریم: Plan تا Human Approval و Execute برای ادامه مسیر تا Git و Report.</p>
+      </div>
+      <div class="panel">
+        <div class="flow-scroll">
+          <div class="pipeline">
+            <div class="step"><span class="dot">✓</span><strong>Planner</strong><small>تحلیل درخواست</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Human Approval</strong><small>تأیید و بازخورد</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Coder</strong><small>تولید فایل‌ها</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Runner</strong><small>اجرای واقعی</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Reviewer</strong><small>تصمیم بر اساس خروجی</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Fixer</strong><small>اصلاح محدود</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Git</strong><small>Commit و Push</small></div>
+            <div class="step"><span class="dot">✓</span><strong>Report</strong><small>گزارش نهایی</small></div>
+          </div>
+        </div>
+        <div class="branch">
+          <div class="branch-card pass"><h3>مسیر موفق</h3><p class="muted"><code>exitCode = 0</code> و تأیید Reviewer، سپس Git و Report.</p></div>
+          <div class="decision">Reviewer<br>Decision</div>
+          <div class="branch-card fail"><h3>مسیر اصلاح</h3><p class="muted">خطای واقعی Runner به Fixer می‌رسد؛ حداکثر سه تلاش، سپس گزارش شفاف شکست.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="langgraph">
+      <div class="section-head">
+        <div><span class="badge">03 · Agent Internals</span><h2>گراف داخلی LangGraph</h2></div>
+        <p>هر فراخوانی Planner، Coder، Reviewer و Fixer از یک StateGraph واقعی عبور می‌کند؛ LangGraph مسئول چرخه تصمیم داخلی Agent است، نه orchestration کل سیستم.</p>
+      </div>
+      <div class="panel">
+        <div class="flow-scroll">
+          <div class="graph-wrap">
+            <div class="graph-node"><strong>START</strong><br><small class="muted">Messages + Payload</small></div><div class="arrow">→</div>
+            <div class="graph-node generate"><strong>Generate</strong><br><small class="muted">Luna API via LangChain</small></div><div class="arrow">→</div>
+            <div class="graph-node validate"><strong>Validate</strong><br><small class="muted">Zod Structured Output</small></div><div class="arrow">→</div>
+            <div class="graph-node end"><strong>END</strong><br><small class="muted">Validated Result</small></div>
+          </div>
+        </div>
+        <div class="repair-loop">اگر Validate ناموفق باشد: <strong>JSON Repair → LLM Repair → Validate</strong>؛ فقط یک چرخه اصلاح ساختار انجام می‌شود.</div>
+      </div>
+      <div class="cards" style="margin-top:13px">
+        <article class="card"><span class="tag">Planner</span><h3>برنامه‌ریزی</h3><p>درخواست را به گام‌ها، فایل‌ها و فرمان‌های قابل تست تبدیل می‌کند و ابهام‌ها را مشخص می‌کند.</p></article>
+        <article class="card"><span class="tag">Coder</span><h3>تولید کد</h3><p>برای هر فایل یک worker مستقل با context محدود اجرا می‌شود تا خروجی کوچک‌تر و قابل‌کنترل باشد.</p></article>
+        <article class="card"><span class="tag">Reviewer</span><h3>ارزیابی واقعی</h3><p>بر اساس exit code، stdout و stderr تصمیم می‌گیرد؛ موفقیت بدون اجرای سالم پذیرفته نمی‌شود.</p></article>
+        <article class="card"><span class="tag">Fixer</span><h3>اصلاح هدفمند</h3><p>خطا، فایل‌های فعلی و سابقه تلاش‌ها را دریافت می‌کند و فقط فایل‌های لازم را جایگزین می‌کند.</p></article>
+        <article class="card"><span class="tag">LangChain</span><h3>رابط مدل</h3><p><code>ChatOpenAI</code> را برای اتصال مستقیم به Luna API و Structured Output فراهم می‌کند.</p></article>
+        <article class="card"><span class="tag">LangGraph</span><h3>State Machine</h3><p>Nodeها، State و شرط انتقال بین Generate، Validate، Repair و END را مدیریت می‌کند.</p></article>
+      </div>
+    </section>
+
+    <section id="state">
+      <div class="section-head">
+        <div><span class="badge">04 · State & Safety</span><h2>State، امنیت اجرا و بازیابی</h2></div>
+        <p>هیچ تصمیم مهمی فقط در حافظه n8n باقی نمی‌ماند؛ وضعیت پایدار در PostgreSQL ثبت و رویدادها به Dashboard push می‌شوند.</p>
+      </div>
+      <div class="cards">
+        <article class="card"><h3>PostgreSQL</h3><ul><li><code>runs</code> وضعیت کلی</li><li><code>run_actions</code> تلاش هر Agent</li><li><code>code_versions</code> نسخه فایل‌ها</li><li><code>execution_results</code> خروجی Sandbox</li></ul></article>
+        <article class="card"><h3>Redis Streams + SSE</h3><p>Eventها هم در دیتابیس ماندگارند و هم از Redis به صفحه Run ارسال می‌شوند تا UI بدون refresh به‌روزرسانی شود.</p></article>
+        <article class="card"><h3>Docker Sandbox</h3><ul><li>Node.js container مستقل</li><li>شبکه خاموش هنگام تست</li><li>محدودیت CPU و RAM</li><li>Timeout و حذف container</li></ul></article>
+        <article class="card"><h3>Retry قابل‌کنترل</h3><p>Failure به <code>waiting_retry</code> می‌رود، n8n از wait URL ادامه پیدا می‌کند و سه تلاش واقعی Fixer شامل timeout هم enforce می‌شود.</p></article>
+        <article class="card"><h3>Watchdog</h3><p>Action بدون heartbeat از حالت running خارج می‌شود تا Run برای همیشه گیر نکند و امکان بازیابی داشته باشد.</p></article>
+        <article class="card"><h3>GitHub</h3><p>نسخه نهایی commit و push می‌شود و SHA آن در گزارش Run و تاریخچه پروژه قابل رهگیری است.</p></article>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="section-head">
+        <div><span class="badge">05 · Presentation Script</span><h2>سناریوی پیشنهادی دمو</h2></div>
+        <p>این ترتیب، تمام الزامات اصلی پروژه را در یک اجرای کوتاه و قابل‌فهم به استاد نشان می‌دهد.</p>
+      </div>
+      <div class="panel">
+        <ol class="timeline">
+          <li><b>نمایش این صفحه</b><span>توضیح مرز مسئولیت n8n، LangGraph، LangChain، API، Runner و Database.</span></li>
+          <li><b>ساخت پروژه از Dashboard</b><span>یک Todo List کوچک، in-memory و بدون dependency درخواست کنید.</span></li>
+          <li><b>نمایش Planner و Human-in-the-Loop</b><span>Plan را بررسی کنید، بازخورد متنی بدهید و سپس تأیید کنید.</span></li>
+          <li><b>دنبال‌کردن Live Stepper</b><span>تغییر Stateها و Eventهای تهران را بدون refresh نشان دهید.</span></li>
+          <li><b>نمایش اجرای واقعی</b><span>stdout، stderr، exit code و محدودیت‌های Docker Sandbox را ارائه کنید.</span></li>
+          <li><b>نمایش Fixer</b><span>در صورت شکست، انتقال Reviewer → Fixer → Runner را همراه شماره تلاش توضیح دهید.</span></li>
+          <li><b>تحویل نهایی</b><span>تست سبز، گزارش Markdown، commit SHA و ریپازیتوری GitHub را نمایش دهید.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section>
+      <div class="callout"><div>✓</div><div><strong>خلاصه دفاع معماری</strong><div class="muted">n8n فرایند طولانی و Human-in-the-Loop را orchestrate می‌کند؛ LangGraph تصمیم‌گیری داخلی Agentها را کنترل می‌کند؛ LangChain ارتباط ساخت‌یافته با Luna API را می‌سازد؛ Runner کد را واقعاً در Sandbox اجرا می‌کند و API همراه PostgreSQL منبع حقیقت State باقی می‌ماند.</div></div></div>
+    </section>
+  </main>
+
+  <footer><div class="shell">Coding Agent Platform · Standalone Demo Flow · بدون نیاز به سرور یا dependency خارجی</div></footer>
+</body>
+</html>

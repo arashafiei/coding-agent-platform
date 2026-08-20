@@ -24,12 +24,21 @@ Open:
 - API: http://localhost:4000/health
 - n8n: http://localhost:5678
 
+## Architecture demo
+
+Open [`docs/system-flow.html`](docs/system-flow.html) directly in a browser for a standalone, presentation-ready explanation of:
+
+- the complete n8n orchestration flow;
+- the internal LangGraph `generate -> validate -> repair -> end` state machine;
+- Planner, Coder, Reviewer, and Fixer responsibilities;
+- Docker sandbox execution, persistent state, live events, retry limits, Git, and reporting;
+- a suggested end-to-end presentation script.
+
+The page is self-contained and works without starting the platform or installing dependencies:
+
+```bash
+open docs/system-flow.html        # macOS
+xdg-open docs/system-flow.html    # Linux
+```
+
 Import workflow JSON files from `n8n/workflows/` or run `npm run import:n8n` after setting `N8N_API_KEY`.
-
-## Important exam defaults
-`LLM_MODEL=luna-5.6-gpt` is the default to match the assignment. The architecture remains provider-agnostic through an LLM adapter.
-
-## Local n8n already running?
-You can keep your existing Docker n8n instance. Put it on `coding-agent-network` and configure the API URLs to use container DNS names, or expose the API to your existing n8n container.
-
-See `docs/setup.md` and `docs/architecture.md`.
